@@ -1969,6 +1969,22 @@ const pattern = /([^\s=]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?/g;
 改完重跑：**61 个页面目录、60 个零问题、唯一一条 error 正是用户改坏的那处**；配对、`page-id`、
 `page.json` 三项在其余 60 个文件上零误报。
 
+### 推上去之后又漏了两类：`》》66` 和 `>>4564`
+
+用户立刻抓到反例 —— `产品建档/产品信息建档/index.html`。第 21 行是
+`<el-col :xs="12" :sm="4" 》》66>`，那两个是**全角书名号**（U+300B）。第一版只查「属性名以
+数字开头」，`》》66` 是以 `》` 开头的，正正好好从缝里溜过去。补第二条判定：**属性名里有
+非 ASCII 字符**（`/[^\x21-\x7e]/`），和第一条并成一个 `if`。
+
+同一个文件第 11 行还有另一种坏法：`<el-col>>4564 style="display: flex; …" :xs="24">`。
+标签在第一个 `>` 就结束了，后面那串**属性全被当成文本**显示在页面上（`el-col` 的元素内容
+就是 `>4564 style="…"`）。这一类从属性串里根本看不出来 —— 得回头看标签**收尾的 `>` 后面
+是不是紧跟又一个 `>`**。于是给 `scanHtmlTags` 的每一项补上 `end`（收尾 `>` 的下标，
+`truncated` 时给 -1），`htmlStructureIssues` 里加一条 `stray-tag-close`。判定故意只认
+**紧邻**（中间隔一个空格就不报），把误报压到零。
+
+两条规则重跑探针：**61 个页面目录、60 个零问题**，两条 error 正好落在上面那两行上。
+
 ### 探针的另一个坑
 
 生成探针副本（把 `const HANDLERS = {` 换成 `export const HANDLERS = {`）别用
@@ -2009,4 +2025,493 @@ for (const shot of Array.from(shotsRef.current)) {
 - **先拷再用**：`Array.from(shotsRef.current)` —— `await` 期间 state 可能又变了。
 
 **注意**：客户端半边，刷新页面就生效，不用重启。
+
+## 三个「整片推送」的入口收起来了
+
+「脚本」页签上有三张卡属于「一整片推上去」：`source-push.js`（推送整个项目）、
+`source-api-push.js`（推送全部 API）、`source-page-push.js`（推送全部页面）。用户要求把它们藏起来 ——
+动静太大，误点一次不好收场。
+
+做法不是删 `RUN_CATALOG` 的条目，而是加 `hidden: true`（`lib/index.js` 的 `RUN_CATALOG`，约 `:1617`），
+在 `projectListScripts` 的循环里跳过：
+
+```js
+const preset = RUN_CATALOG[dirent.name];
+/* 收起来的整片推送入口：脚本还在，只是不给按钮。 */
+if (preset !== undefined && preset.hidden === true) continue;
+```
+
+三个要点：
+
+- **条目要留着。** `label` / `mode` / `args` 这些信息别处还有用 —— 脚本万一被手动跑，面板仍认得它；
+  条目一删就退化成「未登记」，标签和参数都得靠猜。
+- **收起来的只是按钮。** 单个页面 / 接口的推送走文件树右键菜单，不看这张表；脚本本身也照样躺在
+  工作区根目录下，真要全量推时开个终端 `node source-push.js` 手动跑即可。`projectRunScript` 按脚本名
+  直接找，面板不显示也不影响它。
+- **探针复核**：工作区根下 7 个 `source-*.js`，面板只列出 4 张卡（`source-clone.js` + 三个拉取），
+  三个推送的都不见了。
+
+host 半边，**要重启 dsh web**。
+
+## 项目目录的备注：那串 uuid 终于能改了名
+
+工作区根下那一层的目录名就是低代码项目在服务器上的 uuid（32 位十六进制，
+如 `aaaabbbbccccddddeeeeffff00001111`）。文件树里看它跟看哈希一样，用户要求：
+**脚本页签里维护过的备注优先显示，没有备注才显示 uuid；而且这一层的右键不能再「重命名」。**
+
+### 备注存在哪
+
+不存新文件。就是 `project-config.json` 里那个服务器档案的 `projects` 清单 ——
+「脚本」页签的项目下拉维护的同一份（`servers[].projects[]`，每项 `{ uuid, name }`）。
+写回去走已有的 `projectSetProjects`（**全量替换**语义，改名的做法本来就是"同一个 uuid 再存一次"）。
+
+所以备注是**挂在档案名下**的，不是挂在工作区上：同一台服务器下的工作区看到同一份。
+这也意味着**没选档案时改不了** —— 右键那项会灰掉，鼠标上去给一句原因
+（`CSS.menuItemDisabled`，`item(...)` 的第四参）。
+
+### 为什么不给改名
+
+目录名 = 项目在服务器上的 uuid，是推送 / 拉取认项目的凭据。它不是装饰，改掉就对不上号了。
+所以这一项换成：
+
+| 行 | 项目目录（根那层 uuid） | 其他目录 / 文件 |
+| --- | --- | --- |
+| 右键菜单 | 「修改备注（当前：智家排程）」 | 「重命名」 |
+| F2 | 进备注编辑 | 进改名编辑 |
+| 输入框 placeholder | `项目备注（留空 = 显示 uuid）` | `文件夹名` / `文件名` |
+
+**判定的三道关**（`isProjectDir`，`lib/client.js` 的 `renderLevel` 上方）：
+`kind === "directory"` + `parentOf(entry.path)` 等于工作区根（两边都去掉尾分隔符再比）
++ 名字匹配 `/^[0-9a-f]{32}$/i`。**只认根的直接子目录** —— 更深几层就算名字碰巧长这样，
+也只是普通目录，照旧给「重命名」。
+
+### 两个实现细节
+
+- **同一组编辑 state。** 改名和改备注共用一个输入框，靠 `editIsNote` 分流：
+  是备注就走 `submitNote`（只动配置），否则走原来的 `submitRename`（动磁盘）。
+  别为这个再养一套 `notePath` / `noteName`，那会多出一倍"取消时清哪个"的组合。
+- **显示与数据分开。** 行里渲染的是 `entryLabel(entry)`，而 `data-name` 仍然是
+  `String(entry.name)`（真 uuid）—— 键盘那条路（F2 / Delete / 拖着走）全靠 `data-name`，
+  它必须还是真名。真实 uuid 想确认时把鼠标停在这一行上，整行的 `title` 是 `entry.path`，
+  最后一段就是它。
+- **空备注不等于删条目。** 清空备注存的是 `{ uuid, name: "" }` —— 条目留着（下拉里还认得出它），
+  只是这一层显示回 uuid。host 的 `cleanProjects` 只要求 uuid 非空，所以这条路是通的。
+- 「脚本」页签的项目下拉**本来就是** `name === "" ? uuid : name`，不用动。
+
+**客户端半边，刷新页面就生效，不用重启。**
+
+### 数据来源只有一个
+
+备注只认「脚本」页签里手动维护的那份。`.env` 注释里捡出来的名字（`projectList` 的第二个来源）
+**不参与**文件树的显示 —— 否则"备注"就成了两个地方都能改的东西，改哪个、以谁为准都说不清。
+
+## 项目目录里的结构层也不给改名
+
+备注那一节把根那层的 uuid 目录锁住了，用户接着指出：**里面这几层也是身份，同样不能改** ——
+`apis` / `databases` / `pages` 三个固定目录，再加上 `databases` 底下的库和表。
+
+### 哪一层锁、哪一层不锁
+
+| 路径（相对工作区根） | 给不给改名 | 为什么 |
+| --- | --- | --- |
+| `<uuid>/apis`、`<uuid>/databases`、`<uuid>/pages` | **不给** | 三块固定结构，是平台约定的入口 |
+| `<uuid>/databases/<库>`、`<uuid>/databases/<库>/<表>.json` | **不给** | 库名、表文件名就是平台认的库名和表名 |
+| `<uuid>/apis/<接口目录>` | 给 | 接口的身份在 `meta.json` 的 `id` 上，目录名只是显示名 |
+| `<uuid>/pages/<页面目录>` | 给 | 页面的身份在 `page.json` 的 `uuid` 上，目录名只是显示名 |
+| 别的目录 / 文件 | 给 | 照旧 |
+
+`apis` / `pages` 的子目录故意**不锁**；而 `databases` 底下连表文件名都是身份 ——
+`databases/lims/lims_spc_item.json` 里 `mcTable.tableName = "lims_spc_item"`、
+`mcTable.catalog = "mes"`（**库名和 catalog 还可能不一样**），所以整棵子树都锁。
+
+### 判定与表现
+
+`isStructurePath(entry)`（`lib/client.js`，紧跟 `isProjectDir`），把 `entry.path`
+按工作区根切开逐段判：
+
+- 第一段必须是 32 位十六进制（那层项目目录）；
+- 只有两段时，第二段必须命中 `STRUCTURE_DIRS = new Set(["apis", "databases", "pages"])`；
+- 三段以上时，第二段必须是 `databases`。
+
+大小写不敏感（`APIS` 也认）。表现上**不把「重命名」藏起来，而是摆一条灰的**，
+鼠标上去说明为什么（`item(...)` 的第五参换了这段说明）：
+
+> 这是工程的结构层（apis / databases / pages，以及 databases 里的库和表），名字是平台认的，
+> 改了推送 / 拉取就对不上号
+
+灰的比凭空消失好懂 —— 用户看到「重命名」不见了会怀疑是不是坏了。F2 那条路同样拦下来，
+弹一句 notice，**连输入框都不开**。
+
+**探针**（`_probe-struct.mjs`，跑完即删）从原文抠出 `parentOf` / `isProjectDir` /
+`isStructurePath` 三个函数加两行 const，**20 条用例全过**：三个固定目录 + 大写 + `databases/lims` +
+表文件 + 库里的更深一层都拦；`apis/someapi`、`pages/somepage` 及其里的文件、项目目录本身、
+工作区根下的文件和目录、首段不是 uuid 的路径、别的根下的同名路径、`null` 都不拦。
+
+**客户端半边，刷新页面就生效。**
+
+## 右键菜单：每一项前面加了图标
+
+光靠文字扫菜单太累，给每一项配了个 emoji 前缀：
+
+| 图标 | 项 | 图标 | 项 |
+| --- | --- | --- | --- |
+| 📄 | 新建文件 | 🏷 | 修改备注 |
+| 📁 | 新建文件夹 | ✏ | 重命名 |
+| 📖 | 查看源码 | 📦 | 移动到… |
+| 🔗 | 引用 | 🗑 | 删除 |
+| 📝 | 编辑 | ⬆️ / ⬇️ | 推送 / 拉取这个页面（API） |
+| 🔍 | 推送前校验（含「校验中…」「…（缺 uuid / id）」） | ✅ | 标记已推送 |
+| 🔄 | 刷新推送状态（含「扫描中…」） | ♻️ | 重置推送状态 |
+| ✔️ / ✖️ | 确认推送·确认拉取 / 取消 | | |
+
+图标直接写进 `label` 字符串，没有单独的数据结构 —— 菜单项都是就地拼出来的，
+加一层「图标字段」只会多一处要同步的地方。「推送 / 拉取这个页面（API）」那两项的文案
+本来就是拼的（`pushUnitItems` 里 `const label = (verb === "push" ? "⬆️ 推送" : "⬇️ 拉取") + noun;`），
+图标一起拼进去。
+
+**客户端半边，刷新页面就生效。**
+
+## 备注名要切一趟「脚本」页签才出现
+
+用户报：「我得先切换到脚本标签再切换回文件树，名称才会变。」
+
+**根因在读配置的那个 effect**（`lib/client.js`，约 `:2126`）：
+
+```js
+/* 进了「脚本」页签才读配置；页签外不麻烦 host。 */
+useEffect(() => {
+    if (view !== "run") return;
+    ...
+    void loadConfig(dir);
+}, [view, config, dir, loadConfig]);
+```
+
+配置只在 `view === "run"` 时读。而面板**默认就落在「文件树」**（`const [view, setView] = useState("tree")`，
+`lib/client.js:1173`）—— 于是 `config` 恒为 `null`，`projectNote()` 一路返回空串，
+根那层 uuid 目录只能显示 uuid。切到「脚本」触发一次 `loadConfig`，config 到了，
+再切回来才认得出备注。**备注本身没丢，是文件树没去读。**
+
+**修法**：条件放宽成 `if (view !== "run" && view !== "tree") return;`。
+当初只认「脚本」是为了「页签外不麻烦 host」（那次 RPC 原来只有脚本页签需要），
+现在文件树显示备注也要它 —— **显示正确优先于省一次请求**。
+仍然保留「`config.path` 就是当前目录就不再问」这一句，避免来回切页签反复打 host。
+
+**客户端半边，刷新页面就生效。**
+
+## 点项目里的 index.html：去平台自己的预览页看
+
+> 登录那一整段的结论与完整推导另有一份独立文档：[平台预览页登录说明.md](./平台预览页登录说明.md)。
+
+本地这份 `index.html` 只是平台导出的镜像 —— `mc-*`、`el-*` 那些组件在这儿渲染不出该有的样子。
+点它就该去看平台那边的真家伙。规则一条：
+
+> 命中「`<工作区根>\<项目 uuid>\pages\<…>\index.html`」的文件行，**点行时不再交给官方预览器**，
+> 改成新标签页打开
+> `<服务器>/youyaboot-admin/magicalcoder/editor/publish.html?pid=<项目 uuid>&id=<页面 uuid>`。
+
+几个要点：
+
+- **判的是位置不是内容**（`pageProjectOf(path, dir)`）：至少四段、第二段必须是 `pages`、末段必须是
+  `index.html`、第一段必须是 32 位 hex。于是 `apis/foo/index.html`、工作区根下的 `index.html`、
+  `pages/` 下光秃秃那份都不算页面，照旧走官方预览器。分隔符先归一化成 `/` 再比 —— host 给的路径
+  和登记的工作区根来源不同，混着斜杠也要认。
+- **`pid` 是路径第二段**（就是项目目录名）；**`id` 是页面 uuid，路径里没有**，得读同目录的 `page.json`
+  的 `uuid`。那份缺失或坏了就退回 index.html 上的 `mc-page-id` —— 平台导出的页面两个地方都写同一个值
+  （实测 `pages\BOM管理\BOM上传-模板2\`：`page.json` 的 `uuid` = `index.html` 的 `mc-page-id`
+  = `aaaabbbbccccddddeeeeffff00001111`）。
+- **服务器地址**取 `.env` 的 `SERVER_URL`（`platformBaseOf(config)`），尾斜杠先削掉；没有就退回当前绑定
+  档案的 `serverUrl`。两处都空就提示「先在「脚本」页签里选一个服务器档案」，不硬凑一个地址出来。
+- **新标签是先开空页再导航的**：读 `page.json` 是异步的，等 `await` 回来再 `window.open` 已经不是
+  「用户点出来的」了，浏览器会当弹窗拦掉。所以先 `window.open("", "_blank")` 占住位置，
+  拿到 uuid 再写 `win.location.href`；真读不到 uuid 就 `win.close()` 并给提示。
+- **「源码」按钮没动**（`openSnippet` → `openLocal(entry, "code")`）—— 面板里照样能看这个页面的代码，
+  只是「点行」换了个去处。`page.css` / `page.js` 也照旧。
+
+### 开过去之前先登录
+
+平台那个预览页要 `SESSION`，没登录的话落到的还是登录页。麻烦在**谁去登**：
+
+- **`host` 登不了**。它 `POST` 平台确实能拿到响应里的 `Set-Cookie` 文本，但 cookie 必须由**浏览器**
+  在它自己发起的请求里收下 —— 一串文本递进页面没用。
+- **而 `projectGetConfig` 有意不下发密码**（注释写着「绝不返回密码」，只给 `hasUsername` / `hasPassword`）。
+  于是另开了一个只服务这件事的口子：`projectPlatformAuth`（host 半边），读的是**服务器档案**
+  （见下节），返回 `{hasEnv, hasServer, serverUrl, tenantName, userName, password}` —— 曾经还返一个
+  `projectUuid`（取 `.env` 的 `PROJECT_UUID`），后来发现登录要的是**平台常量**而不是任何项目 uuid，
+  客户端也再没用过它，就把这个字段删了（留着只会让人以为「登录该用当前项目」）。
+  路径照旧 `requirePath` + `ownerOf` 卡在工作区里。**这是全插件唯一一处把密码交给页面的地方**，
+  别的 RPC 的脱敏行为都没动。
+
+页面这边（`loginOnBrowser`）：
+
+- 用的是**第三套**登录：`POST <服务器>/youyaboot-admin/magical_lowcode/web_user/login`，
+  body `{projectUuid, username, password}`，`credentials: "include"`。平台实测回了
+  `Access-Control-Allow-Credentials: true` + `Access-Control-Allow-Origin: http://127.0.0.1:3080`，
+  所以这个跨域请求带得动凭据、也收得下 cookie。
+- **三套登录接口，谁都换不来谁**（这是整件事最绕的地方，前后踩了两轮）：
+
+  | 接口 | 谁在用 | body |
+  |---|---|---|
+  | `…/magical_lowcode/server/web/login` | 设计器登录，`scaffold/source-*.js` 拉取 / 推送 | `{userName, password}` |
+  | `…/magical_lowcode/manager/web/login` | 后台管理 | `{tenantName, username, password, projectUuid}` |
+  | `…/magical_lowcode/web_user/login` | **预览页（`publish.html`）要的就是它** | `{projectUuid, username, password}` |
+
+  三个接口下发的 cookie **同名**（`SESSION`），后登的顶掉先登的 —— 所以「都登一遍」没有用，
+  只能登对的那一条。
+- **症状链**：`publish.html` 是纯静态外壳，但它加载的 `magicalcoder-ui.js` 一进来就调
+  `GET …/magical_lowcode/web_user/check-login`；返回 `code -20` 时 `magicaltool.js` 的响应拦截器
+  会把页面跳到 `magicalcoder/webuser/index.html` —— 用户看到的就是「登录信息已超时,请重新登录」。
+  **实测：`manager/web/login` 与 `server/web/login` 下发的 `SESSION` 都不被 `check-login` 认**
+  （都回 `{"flag":false,"code":-20,"desc":"请先登录"}`），只有 `web_user/login` 的认。
+  所以早期那个「登录明明成功、预览页还是进不去」不是密码错，是登错了接口。
+  后来拿**平台后台登录页真正在用的那对账号**又复了一遍，还特意在登录之后多走了一趟它跳转到的
+  `magicalcoder/admin/index.html`（16375 字节那个首页）——结论不变，`check-login` 照样 `-20`。
+  所以「先走后台登录页、再去开预览页」这条路是**不通的**，跟账号对不对没关系，是接口不对。
+- **凭据用哪套**：`web_user/login` 实测**设计器账号和后台账号都收**（两套都试通了）。
+  设计器账号在档案里必然存在，后台账号可能压根没维护，所以定成**设计器优先、后台兜底** ——
+  `projectPlatformAuth` 于是返回两套：`devUserName` / `devPassword`（档案 `username` / `password`）
+  与 `userName` / `password`（档案 `adminUsername` / `adminPassword`）。
+- 判成功看 `flag === true || code === 0 || code === 200`（与 `scaffold/utils.js` 同款），
+  失败把平台的 `desc` 原样端出来 —— 那个描述挺准。
+  成功时响应长这样：`{"flag":true,"code":0,"desc":"成功"}` +
+  `Set-Cookie: SESSION=…; Path=/; HttpOnly; SameSite=Lax`。
+- 顺序是**先读 uuid、再登录**：uuid 读不到就没必要再折腾登录，直接把占位的空标签关掉并提示
+  （预览页地址里要 `id`、「登录后跳回哪儿」也要它，所以它得先到手）。
+- **`projectUuid` 用页面真实所属的项目**（`pageProjectOf` 算出来的那个），预览页地址里的 `pid` 也是它 ——
+  两处终于是同一个值了。`web_user/login` 对这个字段不挑（实测平台常量 `beddb82e…` 也收），
+  但平台自己的登录页（`webuser/index.html`）是从 `?pid=` 里把它取出来的，插件跟着它走。
+
+  > 早期版本的坑（记着别再走回去）：那时用的是 `manager/web/login`，它的 `projectUuid` **必须**是
+  > 平台常量 `beddb82e95d14952b7a80c014c4c19c7`，拿项目自己的 uuid 去登会得到「用户名或密码错误」。
+  > 那个常量现在只服务**脚本侧**的后台登录（写进 `.env` 的 `ADMIN_LOGIN_PID`），client 里已经删掉了。
+
+**跨站这一层绕不过去，两条路都试过了**：
+
+- **表单 POST + 顶层导航**：表单提交是第一方导航，浏览器不会拦它收到的 `Set-Cookie`，
+  本想用这招彻底绕开第三方 cookie 限制。但平台**只认 `application/json`**，实测
+  `application/x-www-form-urlencoded` 和 `multipart/form-data` 都被打回：
+
+  ```
+  {"success":false,"message":"Content type 'application/x-www-form-urlencoded' not supported","code":500}
+  ```
+
+  （`multipart` 同理）而 HTML 表单发不了 JSON —— 这条路到此为止。
+- **跨站 `fetch` + JSON**：这是唯一能用的形态，但它收到的那把 `SESSION` **不一定存得下来** ——
+  请求会老老实实回 `200` / `code 0`，`Set-Cookie` 却被丢掉（Chrome 的「阻止第三方 Cookie」等策略），
+  预览页于是照样报「登录信息已超时」。**光看返回码分辨不出来。**
+
+**`check-login` 这个探针本身也是跨站的，所以它的结论只有一半可信** —— 平台的 `SESSION`
+带 `SameSite=Lax`，插件页面发出的任何请求都是跨站，**Lax cookie 根本不会带上**：
+
+| 探测结果 | 能推出什么 |
+|---|---|
+| 命中（`code 0`） | 会话确实好好的 —— 省掉一次登录，直接进 |
+| 未命中（`code -20`） | **什么也推不出**：可能没会话，也可能会话好好的、只是 cookie 带不出来 |
+
+**最后一步不是跳平台登录页，而是直接开预览页**（`win.location.href = publishUrl`），把判断权
+交回平台。理由有两条，第二条才是关键：
+
+1. 那条路本来就通：真没会话时，预览页自己的 `magicaltool.js` 拦截器会跳
+   `magicalcoder/webuser/index.html?from=<当前地址>`，登完自己跳回来 —— 平台早写好了这套。
+2. **`check-login` 这个探针本身也是跨站的**：浏览器拦 cookie 时它连「已登录」都问不出来
+   （cookie 带不出这次请求），于是每次都判成「没会话」。可预览页对自己的域是**第一方**，
+   会话在不在它一清二楚。要是照探针的结论去跳登录页，用户就会**每次都被要求登一遍**，
+   哪怕平台那边会话好好的。
+
+早期版本把「未命中」当成「没会话」，在上面盖了两层逻辑，**两层都错**：登完再查一次
+`check-login`「才算数」，以及「记下这个服务器被拦了、以后不再登」（`localStorage` 键
+`dsh-project-panel:webuser-login-blocked:<base>`，按天保鲜）。前者会把好会话判成坏会话，
+后者会让用户**每次都被要求登一遍** —— 实际症状就是：用户重启后点 `index.html` 依然报超时，
+面板还理直气壮地说「这个服务器以后不再问」。**现在两套都删了**，`openOnPlatform` 只剩三步：
+查一次 →（未命中就）登一次 → **无论成败都直接开预览页**。
+
+**这一切都按服务器分开**：探测、登录、那个记住键，全都以 `base` 为参数 / 后缀，cookie 本身也按域存。
+所以**同一台服务器**上登录过一次之后，点这台服务器下任何项目的 `index.html` 都直接进
+（开头的 `check-login` 命中就省掉登录）；换一台服务器则各走各的登录，互不顶替、也不共用会话。
+
+**平台的登录 cookie 30 分钟就过期**（平台侧定的），这条决定了整个流程的形状：
+
+- 「先查会话」不是优化而是常态：30 分钟内连点几个页面命中一次，其余每次都得重登。
+- 自动登录因此是**主力路径**，不是兜底 —— 浏览器放行时用户基本无感：点 → 探测未命中 → 自动重登 → 进。
+- 浏览器拦下 `Set-Cookie` 时自动登录就白登，只能由用户在预览页**手动登一次**（第一方，
+  cookie 存得进去），之后 30 分钟内都畅通。
+
+**想彻底免掉手动登录，只有一条路：让插件页和平台同站。** `SameSite=Lax` 的分界线是「站点
+（eTLD+1）」而不是端口 —— 如果 `dsh web` 也通过平台那台机器的域名 / IP 访问（例如同域反代到
+`:3080`），插件的请求就成了**同站**请求，Lax cookie 照带，探测、登录、预览页整条链全自动。
+用 `127.0.0.1:3080` 访问时做不到这一点。
+
+> **实际定型（用户实测后的结论）**：这条同站的路走不了 —— `dsh web` 固定跑在本机
+> `127.0.0.1:3080`，也不方便为它单独配反代；浏览器里放行第三方 Cookie 同样不可行。
+> 所以**用户侧就按「手登一次」用**：第一次（以及每次会话过期后）在平台自己的登录页登一次，
+> 之后 30 分钟内点任何页面都直接进。插件这边不再为「免登录」做任何额外动作，
+> 那句「自动登录」只是**跨站条件允许时**才会生效的加分项，不是承诺。
+
+> **踩过的坑：`Number.isFinite` 不做类型转换。** `localStorage.getItem` 回来的是**字符串**，
+> `Number.isFinite("1759…")` **恒为 false** —— 上面那段「记住这个服务器」的记忆因此从未生效，
+> 每次点击都白试一次自动登录（功能上看不出来，只是多打一个请求），必须先 `Number(raw)` 再判。
+> 探针必须**注入 `raw`（字符串 / null）而不是数字**才抓得到这条。那段记忆现在整个删了
+> （前提就不成立），但下次再往 `localStorage` 里存数字时，这条教训照样适用。
+
+### 后台账号密码存在服务器档案里
+
+`.env` 里那对 `USERNAME` / `PASSWORD` 是**设计器**账号（`scaffold/source-*.js` 拉取 / 推送一直用它）。
+后台那套账号是**另一回事**：`manager/web/login` 只认后台账号，拿设计器账号去登会得到「用户名或密码错误」，
+症状看起来像「密码填错了」。一套凭据服务不了两件事，所以后台那套单独存 ——
+不过**预览页那次登录（`web_user/login`）两套都收**（见上），插件按设计器优先挑。
+
+- **存在服务器档案里**（`project-config.json` 的 `servers[]`），字段 `adminUsername` / `adminPassword`
+  / `adminTenant`，就在原有 `username` / `password` 旁边。「脚本」页签点档案的**「编辑」**，
+  表单最后三行是「后台租户」/「后台账号」/「后台密码」。
+- **后来还是写进 `.env` 了**（`ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_TENANT` / `ADMIN_LOGIN_PID`，
+  见下面「脚本也该用后台会话」那一节）。原先这里写的是「不往 `.env` 写 —— 脚本用不到它，少一处密码落盘」，
+  那句随着脚本改用后台会话就作废了：**脚本恰恰需要它**。取舍见新那节。
+- **`publicServer` 只放行 `adminUsername`**，密码那边和设计器密码一样只给 `hasAdminPassword`
+  （client 靠它决定密码框是「留空即不改」还是「后台登录密码」）。`projectPlatformAuth` 是唯一的例外，
+  它当真把密码给页面 —— 因为浏览器得自己去做那次登录。
+- **保存的规矩和设计器密码一模一样**（`projectSaveServer`）：`adminPassword` 不是字符串就**保留原值**；
+  是字符串（含空串）才覆盖。面板那边点「清空」会传空串，于是清得掉。
+- **没维护时的提示分两种**（`openOnPlatform` 里看 `hasServer`）：绑了档案但两套账号都没有 →
+  「服务器档案里还没维护账号密码 —— 打开平台预览页得先登一次平台自己的会话，用「设计器账号 / 密码」
+  或「后台账号 / 密码」都行。到「脚本」页签点这个档案的「编辑」补上」；压根没绑 →「这个工作区
+  还没绑服务器档案……」。别把这两种混成一句，不然用户不知道该去哪儿。
+- **`tenantName` 也在这里了**：档案的 `adminTenant` 优先于 `.env` 的 `TENANT_NAME`，都没有才用 `admin`。
+  和两个密码同一套保存规矩 —— 不给这个字段就保留原值，给了（含空串）才覆盖，`envValue(...).trim()`
+  顺手把两侧空格去掉（从平台那边复制租户名常带空格）。
+- **`adminTenant` 为空串是正常状态**，不是「没填错」：host 侧读的时候 `"" || env || "admin"` 逐级兜底，
+  所以「留空即 admin」这句话在表单占位符、保存、读取三处是一致的。新建档案的初值也是空串
+  （`lib/client.js:4606`），别写成 `"admin"` —— 那样占位符永远显示不出来，还会把默认值硬写进磁盘。
+
+探针（临时工作区 + 假值，跑完即删）：**13/13** —— 档案里填了租户就用它、档案留空回落到 `.env` 的
+`TENANT_NAME`、两处都没有给 `admin`、没绑档案时 `hasServer=false` 但仍给 `admin`（好让页面先把
+「去补账号」的提示说完）、更新时不传 `adminTenant` **保留原值**、显式传新值生效、两侧空格被 trim。
+最早那版这里有个真 bug：`server.adminTenant = envValue(source.adminTenant ?? "").trim();` 不传就写成
+空串，把档案里已有的租户悄悄抹掉 —— 探针第 9 条抓到的，改成 `if (typeof source.adminTenant === "string")`
+后转绿。**凡是「编辑表单回填 → 保存」的字段，host 侧都要想清楚「不传」到底是不是「清空」。**
+
+旧探针（后台账号密码那次）：22/22 —— 档案里有账号时取到那对值、`.env` 的 `TENANT_NAME`
+覆盖默认、绑了空档案时 `hasServer=true` 但账号为空、没绑档案时 `hasServer=false`、新建档案落盘
+两个字段、更新时不传密码保留原值、显式传空串清空、`projectGetConfig` 不吐明文密码。
+
+## 脚本也该用后台会话：业务接口只认它
+
+起因是一份交接清单 `后台登录改造说明.md`（用户原话：「之前描述的后台登录有问题」）。核心一条：
+**平台把「项目包同步」和「业务接口」拆成了两套鉴权。**
+
+| | 接口 | body | 能干什么 |
+| --- | --- | --- | --- |
+| 设计器 | `…/magical_lowcode/server/web/login` | `{userName, password}` | 拉 / 推项目包（`local-export`、`local-import` 这类） |
+| 后台 | `…/magical_lowcode/manager/web/login` | `{tenantName, username, password, projectUuid}` | 以上全部 **+ openapi / crud 等业务接口** |
+
+`scaffold/source-*.js` 一直用的是**前者**。所以只要脚本里开始调业务接口（比如按条件查一张表），
+就会撞上 `{"flag":false,"code":-20,"desc":"请重新登录"}` —— 而**登录那一步明明是成功的**。
+这种「半好不坏」最难查：报错说的是会话，实际是会话的**种类**不对。
+
+### 后台凭据怎么到脚本手里：方案 A
+
+两条路，清单强调只能选一条：
+
+- **A（选它）**：`applyConfigToEnv` 把 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_TENANT` /
+  `ADMIN_LOGIN_PID` 一并写进工作区 `.env`。
+- B：只在 `projectRunScript` 的 `spawnEnv` 里注入，不落盘。
+
+选 A 的理由不是「方便」，是 **B 会退化**：不落盘的话，用户在终端手动 `node source-page-pull.js`
+时环境里没有那四个变量，`resolveLogin` 就悄悄退回设计器登录 —— 于是同一个脚本「在面板里跑没问题、
+在终端跑就报请重新登录」。**同样的输入给出不同的行为，比多一处密码落盘糟得多**，
+何况 `.env` 里本来就躺着设计器密码，备份机制（`project-env-backups`）也是一视同仁。
+
+### `resolveLogin` 是个纯函数，没有全局状态
+
+`scaffold/utils.js` 里新增 `resolveLogin(serverUrl)`，把「选哪套接口」收成一处：
+
+```js
+ADMIN_USERNAME && ADMIN_PASSWORD 都在且非空
+  → { mode: 'manager', url: …/manager/web/login,
+      body: { tenantName: ADMIN_TENANT || TENANT_NAME || 'admin',
+              username, password,
+              projectUuid: ADMIN_LOGIN_PID || PLATFORM_LOGIN_PROJECT } }
+否则
+  → { mode: 'server', url: …/server/web/login,
+      body: { userName: process.env.USERNAME || '', password: process.env.PASSWORD || '' } }
+```
+
+- **判据是「两个都在且非空」**，不是「有一个就算」—— 只填了账号没填密码时退回设计器，
+  好过拿着半套凭据去后台接口那儿换个看不懂的报错。
+- `login()` 跟着改成 `curl … --data-binary @-` + `execSync(cmd, { input: JSON.stringify(cfg.body) })`。
+  顺手解掉一个老毛病：**密码以前是拼进命令行**的，会出现在进程列表里，含 `"` 或 `$` 时还会把命令拼坏。
+- 五个脚本（`source-page-pull` / `source-api-pull` / `source-db-pull` / `source-page-push` /
+  `source-api-push`）改叫 `utils.resolveLogin(SERVER_URL)`，url 和 body 都从 `cfg` 取。
+- `source-db-pull.js` / `source-clone.js` / `source-push.js` 原先**各抄了一份 `loadEnv`**，
+  一起删掉改用 `utils.loadEnv()` —— 三份抄本漂移过一次（抄成 `if (!process.env[key])`「不覆盖」，
+  于是 Windows 自带的 `USERNAME`＝当前账户名会顶掉 `.env` 里的登录名），没有理由再留三份。
+- `ensureLogin` 只是转发参数给 `login`，没动。`utils.js:88` 那处硬编码的 `server/web/login`
+  是**回退分支**，应当保留 —— 全库就剩这一处。
+
+### `PLATFORM_LOGIN_PROJECT` 是两处同源
+
+同一个常量在两个地方出现，改一处就得改另一处（注释里互相指了路）：
+
+- `lib/index.js` 的 `PLATFORM_LOGIN_PROJECT` —— 写 `.env` 的 `ADMIN_LOGIN_PID`。
+- `scaffold/utils.js` 的 `PLATFORM_LOGIN_PROJECT` —— 脚本侧的兜底（`ADMIN_LOGIN_PID` 没给时用）。
+
+> `lib/client.js` 里**曾经**也有一份，那是预览页还在用 `manager/web/login` 的时候。
+> 现在预览页走 `web_user/login`，那条接口的 `projectUuid` 传项目真实 uuid，所以 client 那份删了。
+
+`scaffold` 那一份不能从插件 import（`link:` 装法不装传递依赖，脚本又是拷到工作区里独立跑的），
+所以只能是硬编码常量 —— 好在它是个**平台约定**，不是某个客户的配置。
+
+### 两个把值读成 `undefined` 的老坑
+
+`loadEnv` 以前是 `line.match(/^([^=]+)=(.*)$/)`。两个坑都能让 `.env` 静默失效：
+
+1. **CRLF。** JS 里 `.` **不匹配行终止符**，而 `(.*)$` 要一路吃到行尾 —— 行尾站着 `\r`，
+   于是**整行匹配不上**，所有键变 `undefined`。最阴的是 `USERNAME`：它退化成 Windows 自己的
+   同名环境变量（当前账户名），打印出来像模像样，只是登录名不对。
+2. **BOM。** 记事本「另存为 UTF-8」会在开头加 `EF BB BF`，第一个键变成 `"\uFEFFSERVER_URL"`，
+   症状和上面一模一样。
+
+现在两头都堵上：`readFileSync(...).replace(/^\uFEFF/, '')` + `line.trim().match(...)`。
+探针里留了一条**反向断言**（「旧写法确实读不到」）—— 否则「修好了」可能只是因为测试数据恰好是 LF。
+
+### `projectSaveServer` 的「不传」语义终于统一了
+
+`adminUsername` 一直是无条件覆盖（`envValue(source.adminUsername ?? "")`），
+调用方漏传就把已有的后台账号**悄悄清空**。`adminTenant` 和两个密码早就是
+「`typeof source.X === "string"` 才动」，只有它漏了。改成同一套规矩：
+
+- 不传（`undefined`）→ 保留原值；传空串 → 清空；传新值 → 覆盖。
+
+面板表单照旧（它总是带上 `adminUsername`，所以「清空」按钮照常工作）。**通用教训**：
+凡是「编辑表单回填 → 保存」的字段，host 侧都得想清楚「不传」到底是「保留」还是「清空」。
+
+### 验证
+
+三个一次性探针（跑完即删，`DSH_HOME` 指向临时目录）：
+
+| 探针 | 覆盖 | 结果 |
+| --- | --- | --- |
+| `_probe-resolve-login.cjs` | `resolveLogin` 的分支：无 `ADMIN_*` / 两个都给 / 租户三级回退 / `ADMIN_LOGIN_PID` 覆盖 / 只给一个仍走设计器 / 空串仍走设计器 / CRLF 能解析 | 13/13 |
+| `_probe-admin-env.mjs` | `applyConfigToEnv` 写 `.env`：四个键、`ADMIN_TENANT` 空值兜 `admin`、设计器三键不受影响、已有自定义键与注释保留、密码里的 `\r\n` 被摘掉 | 12/12 |
+| `_probe-e2e-pull.mjs` | **端到端**：真档案 → `applyConfigToEnv` → 临时工作区铺 scaffold → `node source-db-pull.js` | 10/10 |
+
+端到端那一跑是真正的证据（它走的是业务接口 `local-export`）：
+
+```
+服务器地址: http://<服务器地址>:28080      ← 不再是 (undefined)，CRLF 修复生效
+✓ 登录成功
+下载URL: …/magicalcoder/user/project/local-export?projectUuid=…&includeTypes=database
+✓ 项目已下载: 255.47 KB
+✓ 处理了 10 个数据库配置 / ✓ 生成了 157 个表文件 / ✅ 拉取成功!
+```
+
+`_probe-e2e-pull.mjs` 会在 `finally` 里把 `project-config.json` **还原成跑之前的样子** ——
+`applyConfigToEnv` 会往档案里加一条临时工作区的绑定，不还原就是把垃圾留在用户配置里。
+
+**这个改动动过 host 半边（`lib/index.js`），要重启 `dsh web` 才生效。**
+
+### 为什么这条路值得走一遍
+
+用户最初报的是「打开这个页面打不开，我用的账号密码是没问题的」。查下去发现是**平台把
+「项目 ID 不对」报成了「用户名或密码错误」** —— 一句谎报把排查方向整个带偏。清单里那套
+「两套接口、两套凭据、两个 uuid」的说法是对的，只是原来的实现把「登录用哪个项目」
+和「预览页看哪个项目」混成了一个变量。**报错文案会骗人，只有实测的请求-响应矩阵不会。**
 

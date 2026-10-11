@@ -17,29 +17,13 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const utils = require('./utils');
 
-// 加载 .env 文件（强制覆盖系统环境变量）
-function loadEnv() {
-    const envFile = path.join(__dirname, '.env');
-    if (fs.existsSync(envFile)) {
-        const envContent = fs.readFileSync(envFile, 'utf-8');
-        envContent.split('\n').forEach(line => {
-            const match = line.match(/^([^=]+)=(.*)$/);
-            if (match) {
-                const key = match[1].trim();
-                const value = match[2].trim();
-                // 强制覆盖环境变量。
-                // 注意：这里**不能**写成 if (!process.env[key]) —— Windows 自带一个
-                // USERNAME 环境变量（当前登录账户名），「不覆盖」的话 .env 里的登录名
-                // 会被它顶掉，登录就会拿系统用户名去试。utils.loadEnv() 也是强制覆盖的，
-                // 两边语义必须一致。
-                process.env[key] = value;
-            }
-        });
-    }
-}
-
-loadEnv();
+// 加载 .env（统一走 utils：CRLF 行尾的坑只需要在 utils 里修一次）
+//
+// 注意：这里必须是**强制覆盖** —— Windows 自带一个 USERNAME 环境变量（当前登录账户名），
+// 写成 if (!process.env[key]) 的话 .env 里的登录名会被它顶掉，登录就会拿系统用户名去试。
+utils.loadEnv();
 
 const PROJECT_UUID = process.argv[2] || process.env.PROJECT_UUID || '';
 

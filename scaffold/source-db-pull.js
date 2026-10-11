@@ -17,25 +17,10 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const unzipper = require('unzipper');
+const utils = require('./utils');
 
-// 加载 .env 文件（强制覆盖系统环境变量）
-function loadEnv() {
-    const envFile = path.join(__dirname, '.env');
-    if (fs.existsSync(envFile)) {
-        const envContent = fs.readFileSync(envFile, 'utf-8');
-        envContent.split('\n').forEach(line => {
-            const match = line.match(/^([^=]+)=(.*)$/);
-            if (match) {
-                const key = match[1].trim();
-                const value = match[2].trim();
-                // 强制覆盖环境变量
-                process.env[key] = value;
-            }
-        });
-    }
-}
-
-loadEnv();
+// 加载 .env（统一走 utils，别在这里再抄一份 —— CRLF 的坑只需要在 utils 里修一次）
+utils.loadEnv();
 
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:8080';
 const PROJECT_UUID = process.argv[2] || process.env.PROJECT_UUID || '';
@@ -60,13 +45,11 @@ let cookieString = '';
 
 async function login() {
     console.log('[1/4] 登录获取授权...');
-    const loginUrl = `${SERVER_URL}/youyaboot-admin/magical_lowcode/server/web/login`;
+    // 业务接口（openapi / crud）只认后台管理会话，走 utils.resolveLogin 决定用哪套登录
+    const cfg = utils.resolveLogin(SERVER_URL);
 
     try {
-        const response = await axios.post(loginUrl, {
-            userName: USERNAME,
-            password: PASSWORD
-        }, {
+        const response = await axios.post(cfg.url, cfg.body, {
             headers: {
                 'Content-Type': 'application/json'
             }

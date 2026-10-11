@@ -24,9 +24,13 @@ const unzipper = require('unzipper');
 function loadEnv() {
     const envFile = path.join(__dirname, '.env');
     if (fs.existsSync(envFile)) {
-        const envContent = fs.readFileSync(envFile, 'utf-8');
+        // 去掉 BOM：用记事本「另存为 UTF-8」会在文件开头写上 EF BB BF，
+        // 不剥掉的话第一个键会变成 "\uFEFFSERVER_URL"，永远匹配不上（表现和 CRLF 那个坑一样）。
+        const envContent = fs.readFileSync(envFile, 'utf-8').replace(/^\uFEFF/, '');
         envContent.split('\n').forEach(line => {
-            const match = line.match(/^([^=]+)=(.*)$/);
+            // 先 trim：.env 若是 CRLF 行尾，非多行模式下 (.*)$ 到不了行尾（JS 里 . 不匹配 \r），
+            // 整行都匹配不上 —— 结果是所有变量读不到，登录退化成拿系统环境变量 USERNAME（当前账户名）去试。
+            const match = line.trim().match(/^([^=]+)=(.*)$/);
             if (match) {
                 const key = match[1].trim();
                 const value = match[2].trim();
@@ -45,16 +49,64 @@ function generateUUID() {
 }
 
 /**
+ * 平台登录项目常量：后台管理登录的 projectUuid 必须用它（= 平台登录页 URL 上的 pid）。
+ *
+ * 用页面 / 项目自己的 uuid 会得到 `{"flag":false,"code":-1,"desc":"用户名或密码错误"}` ——
+ * 平台把「项目不对」伪装成了「密码错」，账号密码全对也一样。实测换成这个常量立刻成功。
+ * 前端那边（`lib/client.js` 的 `PLATFORM_LOGIN_PROJECT`）用的必须是同一个值。
+ */
+const PLATFORM_LOGIN_PROJECT = 'beddb82e95d14952b7a80c014c4c19c7';
+
+/**
+ * 决定这次用哪套登录。
+ *
+ * 平台有两套登录接口：
+ * - `server/web/login`：设计器登录，body `{userName, password}`。
+ * - `manager/web/login`：后台管理登录，body `{tenantName, username, password, projectUuid}`。
+ *
+ * **业务接口（openapi / crud）只认后台那套的会话** —— 带设计器会话去调会得到
+ * `{"flag":false,"code":-20,"desc":"请重新登录"}`，看起来像「没登录」，其实是会话不认。
+ *
+ * `.env` 里有 `ADMIN_USERNAME` + `ADMIN_PASSWORD` 就走后台登录，否则退回设计器登录
+ * （老工作区没有这两个键时行为完全不变）。
+ */
+function resolveLogin(serverUrl) {
+    const adminUser = process.env.ADMIN_USERNAME || '';
+    const adminPwd = process.env.ADMIN_PASSWORD || '';
+    if (adminUser !== '' && adminPwd !== '') {
+        return {
+            mode: 'manager',
+            url: `${serverUrl}/youyaboot-admin/magical_lowcode/manager/web/login`,
+            body: {
+                tenantName: process.env.ADMIN_TENANT || process.env.TENANT_NAME || 'admin',
+                username: adminUser,
+                password: adminPwd,
+                projectUuid: process.env.ADMIN_LOGIN_PID || PLATFORM_LOGIN_PROJECT
+            }
+        };
+    }
+    return {
+        mode: 'server',
+        url: `${serverUrl}/youyaboot-admin/magical_lowcode/server/web/login`,
+        body: { userName: process.env.USERNAME || '', password: process.env.PASSWORD || '' }
+    };
+}
+
+/**
  * 登录并获取 Cookie 文件路径
+ *
+ * 形参 `username` / `password` 保留是为了不动所有调用点，实际取值由 `resolveLogin()`
+ * 从 `process.env` 决定（`loadEnv()` 已经把 `.env` 灌进去了）。
  */
 function login(serverUrl, username, password, projectDir) {
     const cookiesFile = path.join(projectDir, '.cookies');
-    const loginUrl = `${serverUrl}/youyaboot-admin/magical_lowcode/server/web/login`;
+    const cfg = resolveLogin(serverUrl);
 
     try {
-        // 注意：Windows 下 execSync 走 cmd.exe，不识别单引号，JSON body 必须用双引号 + \" 转义
-        const cmd = `curl -s -c "${cookiesFile}" -X POST "${loginUrl}" -H "Content-Type: application/json" -d "{\\"userName\\":\\"${username}\\",\\"password\\":\\"${password}\\"}"`;
-        const response = execSync(cmd, { encoding: 'utf-8' });
+        // 密码不拼进命令行，body 从 stdin 递进去：既躲开 Windows cmd.exe 的引号转义地狱，
+        // 也不让密码出现在进程列表里。
+        const cmd = `curl -s -c "${cookiesFile}" -X POST "${cfg.url}" -H "Content-Type: application/json" --data-binary @-`;
+        const response = execSync(cmd, { encoding: 'utf-8', input: JSON.stringify(cfg.body) });
 
         if (response.includes('"code":0')) {
             return cookiesFile;
@@ -336,6 +388,7 @@ function getTimestamp() {
 module.exports = {
     loadEnv,
     generateUUID,
+    resolveLogin,
     login,
     ensureLogin,
     scanMetaFiles,

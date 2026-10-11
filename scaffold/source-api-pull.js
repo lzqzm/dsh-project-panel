@@ -93,13 +93,11 @@ let apiList = [];
 
 async function login() {
     console.log('[1/4] 登录...');
-    const loginUrl = `${SERVER_URL}/youyaboot-admin/magical_lowcode/server/web/login`;
+    // 业务接口（openapi / crud）只认后台管理会话，走 utils.resolveLogin 决定用哪套登录
+    const cfg = utils.resolveLogin(SERVER_URL);
 
     try {
-        const response = await axios.post(loginUrl, {
-            userName: USERNAME,
-            password: PASSWORD
-        }, {
+        const response = await axios.post(cfg.url, cfg.body, {
             headers: {
                 'Content-Type': 'application/json'
             }

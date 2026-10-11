@@ -14,9 +14,17 @@ LOCAL_URL=http://localhost:8080
 # 线上服务器地址（ENV=server 时使用）
 SERVER_URL=http://your-server.com
 
-# 登录凭证
+# 设计器账号：只有在没有后台账号时才用它兜底
 USERNAME=your_username
 PASSWORD=your_password
+
+# 后台管理账号（推荐）
+# 在面板的「服务器」档案里填好后台账号密码，运行脚本时面板会自动写进 .env
+ADMIN_USERNAME=your_admin_username
+ADMIN_PASSWORD=your_admin_password
+ADMIN_TENANT=admin
+# 平台固定的登录项目 ID（= 后台登录页地址上的 pid），一般不用改
+ADMIN_LOGIN_PID=beddb82e95d14952b7a80c014c4c19c7
 
 # 项目 UUID
 PROJECT_UUID=aaaabbbbccccddddeeeeffff00001111
@@ -24,6 +32,16 @@ PROJECT_UUID=aaaabbbbccccddddeeeeffff00001111
 # 环境类型：local 或 server
 ENV=local
 ```
+
+### 两套登录接口，别搞混
+
+| 有 `ADMIN_USERNAME` + `ADMIN_PASSWORD` | 走哪套 | 能干什么 |
+| --- | --- | --- |
+| 是 | 后台管理登录 `…/manager/web/login` | 全部：项目包拉取 / 推送，以及 openapi / crud 等**业务接口** |
+| 否 | 设计器登录 `…/server/web/login` | 只能拉取 / 推送项目包；调业务接口会返回 `{"flag":false,"code":-20,"desc":"请重新登录"}` |
+
+- 后台登录的 `projectUuid` 必须用平台固定值 `beddb82e95d14952b7a80c014c4c19c7`，**不是**当前工程的 uuid。传当前工程的 uuid 会被平台报成「用户名或密码错误」，很容易误判成密码打错。
+- 所以：**优先在面板里填后台账号密码**（面板会自动补 `ADMIN_*` 四个键）。手工写 `.env` 时把后台账号也写上，否则脚本会退回设计器登录。
 
 ## 脚本列表
 
@@ -260,7 +278,10 @@ node source-db-pull.js aaaabbbbccccddddeeeeffff00001111
 
 ## 注意事项
 
-1. **推送前需先拉取**：首次推送前，请先运行 `source-pull.js` 拉取完整项目
+1. **推送前需先拉取**：首次推送前，请先运行 `source-clone.js` 拉取完整项目
 2. **环境隔离**：本地和线上环境数据独立，互不影响
 3. **备份机制**：推送过程中会创建临时备份，失败时可手动恢复
 4. **Cookie 缓存**：登录凭证会缓存到 `.cookies` 文件中
+5. **`.env` 编码**：脚本会自动剥掉 BOM、并兼容 CRLF 换行。记事本「另存为 UTF-8」会在开头写 BOM（第一个键会变成 `\uFEFFSERVER_URL`），Windows 记事本默认换行是 CRLF（旧版解析会让所有值变成 `undefined`、`USERNAME` 还会退化成 Windows 账户名）—— 现在两种都能读，但仍建议让面板生成 `.env`，别手写
+6. **手动跑脚本时**：`node source-xxx.js` 读的是工作区根目录的 `.env`，所以要么先在面板里跑一次让它写 `.env`，要么自己把 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_TENANT` 补上，否则会退回设计器登录
+7. **别用 `Invoke-WebRequest` 手工拼 `Cookie` 头验证接口**：会得到假的登录失败，用 `curl -c` / `-b` 的 cookie jar 才准

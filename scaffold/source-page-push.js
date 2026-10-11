@@ -268,10 +268,9 @@ async function main() {
         let cookieString = '';
         
         try {
-            const loginResponse = await axios.post(`${SERVER_URL}/youyaboot-admin/magical_lowcode/server/web/login`, {
-                userName: USERNAME,
-                password: PASSWORD
-            }, {
+            // 业务接口（openapi / crud）只认后台管理会话，走 utils.resolveLogin 决定用哪套登录
+            const cfg = utils.resolveLogin(SERVER_URL);
+            const loginResponse = await axios.post(cfg.url, cfg.body, {
                 headers: {
                     'Content-Type': 'application/json'
                 }

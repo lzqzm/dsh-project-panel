@@ -150,11 +150,12 @@ async function main() {
         console.log('[1/5] 登录...');
         // 密码不拼进命令行：那样会出现在进程列表里，而且密码含 " 或 $ 时还会把命令拼坏。
         // 改成 --data-binary @- 从 stdin 喂 JSON body。
-        const loginUrl = `${SERVER_URL}/youyaboot-admin/magical_lowcode/server/web/login`;
-        const loginCmd = `curl -s -c "${cookiesFile}" -X POST "${loginUrl}" -H "Content-Type: application/json" --data-binary @-`;
+        // 业务接口（openapi / crud）只认后台管理会话，走 utils.resolveLogin 决定用哪套登录。
+        const cfg = utils.resolveLogin(SERVER_URL);
+        const loginCmd = `curl -s -c "${cookiesFile}" -X POST "${cfg.url}" -H "Content-Type: application/json" --data-binary @-`;
         const loginResponse = execSync(loginCmd, {
             encoding: 'utf-8',
-            input: JSON.stringify({ userName: USERNAME, password: PASSWORD })
+            input: JSON.stringify(cfg.body)
         });
 
         if (!loginResponse.includes('"code":0')) {
