@@ -13,7 +13,7 @@ dsh-project-panel/
   lib/client.js         client 半边：手写 ESM，改了刷新即生效
   lib/client.editor.js  ⚠ 构建产物（644 KB，CodeMirror 6）—— 不要手改
   src/editor.js         编辑器分片的源码，npm run build:editor 生成上面那个
-  scaffold/             自带的平台脚本模板（source-*.js + utils.js + package.json）
+  scaffold/             自带的平台脚本模板 + 规范（source-*.js / utils.js / package.json / AGENTS.md / AGENTS.global.md / project-rules.md / help.md）
   NOTES.md              这份笔记
 ```
 
@@ -1666,4 +1666,347 @@ const parsed = await readProjectEnv(root);
    假断言）；也**别用 `api()` 去造页面目录**（那会写成 `meta.json`，之后 `touch(.../page.css)`
    直接 ENOENT）。这两条都是写一次性脚本时踩的。
 
+## 工作区规范文件 + 用户级「全局开发规范」（`AGENTS.md`）
+
+低代码平台那套规范（`project-rules.md` / `help.md` / 一份指向它们的 `AGENTS.md`）原本只在平台的
+`localdev/` 模板里，插件铺脚手架时不管它们 —— 于是「拉过工程、没铺过脚手架」的工作区里，
+AI 没有任何规范可读，照着记忆编接口路径和组件属性。现在脚手架把这三份一起铺
+（`SCAFFOLD_FILES` 从 2 项变 5 项），另外多一条**用户级**的全局兜底。
+
+### 为什么光铺工作区不够（这是整件事的起因）
+
+`dsh-agent-instructions` 只沿**会话工作目录**向上找项目根：向上找 `.git`，找不到就退化到 cwd 本身；
+然后从项目根往下扫 `AGENTS.md`。低代码工作区的真实布局是
+`<工作区>/<projectUuid>/{apis,databases,pages}`，而 `<工作区>` 往往**没有 `.git`** ——
+于是「项目根」落到 `<projectUuid>/` 上，**铺在工作区根的那份 `AGENTS.md` 根本不会被读到**
+（`project-rules.md` 同理：它不是机制文件，只被 `AGENTS.md` 用相对路径提到，进不了注入）。
+
+### 解法：装一份到 `$DSH_HOME/AGENTS.md`
+
+`USER_GLOBAL_FILE = "AGENTS.md"`（`dsh-agent-instructions/lib/index.js:141`），
+配 `USER_GLOBAL_DIRECTORY`（`:923`）做 scope key —— 这是**每个会话都会注入**的一层，
+跟工作目录在哪无关。三个 RPC：
+
+| RPC                          | 干什么                                                                 |
+| ---------------------------- | ------------------------------------------------------------------- |
+| `projectGlobalRules`         | 只读状态，回 `{ path, exists, bytes, srcBytes, stale }`                   |
+| `projectInstallGlobalRules`  | 从 `scaffold/AGENTS.global.md` 拷过去；**已存在就回 `{installed:false, reason:"exists"}`，绝不覆盖** |
+| `projectRemoveGlobalRules`   | 只有**逐字节等于模板**才删；用户改过回 `reason:"modified"`，本来没有回 `reason:"missing"`      |
+
+`stale` 是给界面用的：模板变过（插件升级了），已装那份的字节数跟模板对不上就提示「可以移除再安装换成新版」。
+**没做自动更新** —— 那是一份用户级文件，静默改掉别人的东西比提示他手点一次糟糕得多。
+
+为什么复用 `projectGetConfig` 又撤了：面板上「全局规范状态」是独立的一件事，读它的时机
+（面板挂出来就读、装/删完再读）跟配置完全无关；塞进 `projectGetConfig` 会让一次改动的状态有两个来源。
+
+### 模板是「泛化版」，不是 `localdev` 的拷贝
+
+`scaffold/AGENTS.md` 以平台 `localdev/AGENTS.md` 为底本，改了 4 处实例表述：第 4 行的 Trae 提示、
+第 8 行「本地镜像容器」的定义、第 12-18 行目录树的根（`localdev/` → `<工作区>/`）、第 27 行「工作目录根下」。
+`project-rules.md`（27184 B，SHA256 `79BEEA88…D56169`）与 `help.md`（5996 B，SHA256 `FED5F504…E7C5C78E`）
+是**原样拷贝**，已 grep 确认全文不含 `localdev` / `.trae` / `AGENTS` 字样。
+
+`scaffold/AGENTS.global.md` 是另写的**精简版**（约 3.5 KB，占 `dsh-agent-instructions` 默认 65536 字节预算的 5%），
+首行一句适用范围声明：只对「根下同时有 `apis/`、`databases/`、`pages/`」的工作区生效，否则请忽略整个文件 ——
+插件可能被用在任何工程上，一份「低代码专用」的全局规范不该对别的工程说话。
+
+### 展开铺脚手架的副作用：存量工作区
+
+`scaffoldCopy` 是「模板目录里逐个文件，目标已存在就跳过」，没有「目录必须为空」的门禁 ——
+所以**已存在的工程再点一次「铺脚手架」就能把缺的说明补上，且一个字节都不覆盖**。
+反过来，工作区里已经有自己那份 `AGENTS.md` 的，也会被跳过（不会被插件这份顶掉）。
+
+### 提示挂在哪儿
+
+两处，都只在**没装**的时候出现：
+
+- 「脚本」页签顶部（`renderScripts` 里的 `globalRulesBar()`）—— 有完整状态 + 安装/移除。
+- 文件树顶部 —— 只读提示条 + 一个「安装」按钮。挂在**页签层**
+  （`view === "tree" ? renderGlobalRulesHint() : null`）而不是 `renderTree()` 内部：
+  `renderTree()` 一进搜索模式就整块换成结果列表，挂在里面会跟着消失。
+
+### 验证
+
+- `node --check lib/index.js` / `lib/client.js` 通过（client 那半边是 `__ModuleLoader__.load({...})`
+  包装的浏览器产物，但 `--check` 只做语法解析、不执行，所以照样能用）。
+- 铺脚手架的文件数：原来 9 个（7 个 `source-*.js` + `utils.js` + `package.json`），现在 12 个。
+- **动态验证还没跑**（`link:` 装好后重启 `dsh web` 才看得到新 RPC）：
+  ① 文件树 / 脚本页签的提示条出现；② 点安装 → `$DSH_HOME/AGENTS.md` 生成，字节数等于
+  `scaffold/AGENTS.global.md`；③ 再点 → 报「已经存在，没有覆盖它」且文件 mtime 不变；
+  ④ 手动改一个字节再点「移除」→ 要拒（`reason:"modified"`）；⑤ 另开会话问
+  「低代码工程的开发规范是什么」，看它引不引平台规则。
+
+### 一个旁证：机制确实生效
+
+写完 `scaffold/AGENTS.md` 的那个回合结束后，**下一条请求**就带上了
+`<system-reminder> Additional instructions from: dsh-project-panel\scaffold\AGENTS.md` 并注入全文 ——
+`dsh-agent-instructions` 是在成功的 `write` 之后、下一轮追加深层目录指令文件的。
+顺带一个细节：`baselineInstructionState` 按 digest + version 比对（`lib/index.js:841-843`），
+变了会用 `REPLACEMENT_AGENT_INSTRUCTIONS_INTRO`（`:114`）整段替换，**不是一次性追加后永不更新**。
+
+### 权限声明没改枚举值
+
+`dshhub.permissions` 是**给 dshhub 市场看的声明性元数据**，DSH 运行时不据它拦截。
+本地查不到可用的枚举定义：`dsh-plugin-manager` 里 grep `permissions` 只命中 README.md:58
+（讲 pnpm 构建脚本审批）与 `lib/types/types.d.ts:109`；`registered-workspaces` 在
+`dsh-host-plugin` 里 No matches；`dshmarket` 里 46 处命中全是「文件系统」这个普通词；
+profile 下其他插件**一个都没写这个字段**。
+所以不臆造新枚举，保持 `["registered-workspaces"]` 不动，改在 package.json 顶层加一个
+`"//permissions"` 说明键（跟已有的 `"//dependencies"` 同风格）如实交代还写 `$DSH_HOME` 下哪些文件。
+本插件事实上一直在 `$DSH_HOME` 写 `project-config.json` 等，从未被拦。
+
+
+## 「脚本」页签的输出控制台：高度可以拖
+
+用户截图里控制台只剩下 `$ node source-clone.js` 那一行标题栏，脚本自己的输出一个字都看不见。
+原因是 `CSS.runConsole` 是 `flex: 1 1 auto` —— 脚本卡片一多，剩余高度趋近 0，它就被压成一行。
+
+三处改动，全在 `lib/client.js`：
+
+1. **`runConsole` 的 `minHeight` 从 `0` 改成 `CONSOLE_MIN`（120 px）。** 不拖也至少能看见五六行。
+2. **`detail` 加 `overflow: "auto"`。** 这是给上一条兜底的：`detail` 本身是 flex 容器、
+   没有 overflow，`runConsole` 一旦有了 minHeight 就会顶破它，底部被直接裁掉（裁掉的恰恰是
+   最想看的那几行）。加了之后内容超长时整片页签可滚。
+3. **控制台上沿加一条拖拽手柄（`CSS.consoleGrip`，6 px，`cursor: ns-resize`）。**
+   往上拖 = 变高；拖出来的高度写进 `localStorage`（键 `dsh-project-panel:console-height`，
+   **全局一份**，不分工作区 —— 看日志的习惯不属于某个目录）；双击手柄恢复自适应。
+
+几条实现上的取舍：
+
+- **只在松手时写 localStorage**（拖的过程只 `setConsoleHeight`），否则一次拖拽要写几十遍。
+  松手那一刻 state 还没落地，所以另存了一个同步的 `consoleHeightRef`。
+- **上限是「容器高 - `CONSOLE_RESERVE`（160 px）」**，保证上面的卡片区不被挤没。
+- **`ref` 能这么用是因为 `const h = React.createElement`**（`:130`）—— 哪天换成自写的 `h`，
+  `ref: consoleRef` 会静默失效，量出来的高度就恒为兜底值。
+- 高度 state 放在 `ProjectPanel` 里（和 `runLogRef` 挨着）；`renderScripts` 是它的内部函数声明，
+  闭包拿得到。函数声明会提升，但它只在 `return` 里被调用，那时 state 早初始化完了。
+- 拖拽的监听挂在 `window` 上（`pointermove` / `pointerup` / `pointercancel`），不用 `setPointerCapture` —— 见下一节。
+
+**验证**：`node --check lib/client.js` 通过。动态部分要刷新页面看（client 半边不用重启 `dsh web`）。
+
+## 手柄「拖不动」：`setPointerCapture` 不是这里的答案
+
+第一版的拖拽把 `setPointerCapture` 写在手柄元素上（`onPointerMove` / `onPointerUp` 也是元素自己的 props）。
+用户反馈：手柄画出来了，但拖不动。原因有两层，叠在一起：
+
+1. **手柄只有 6 px 高。** 鼠标按下去、稍微一动就离开了它。
+2. `setPointerCapture` 本该救这个场景（把后续指针事件重定向回手柄），但它和 React 的合成事件委托配合得
+   不牢靠 —— 事件被重定向之后，React 在 root 上的委托未必还按预期派发到元素的 `onPointerMove`。
+   两条一叠加，事件链在第一次 `pointermove` 就断了，手感就是「按下去没反应」。
+
+改法是拖拽的经典写法：**在 `onGripDown` 里往 `window` 上挂 `pointermove` / `pointerup` / `pointercancel`**，
+松手时 `removeEventListener` 并还原 `document.body.style.cursor` / `userSelect`。手柄元素上只剩
+`onPointerDown` 与 `onDoubleClick`；`consoleDragRef` 连同它的 state 一起删了（起点、起始高度都进闭包）。
+
+还有一条：**`onGripDown` 里不能调 `event.preventDefault()`** —— 它会把紧随其后的 `dblclick` 一起挡掉，
+双击恢复自适应就废了。防选中正文改用拖拽期间给 `document.body` 设 `userSelect: "none"`。
+
+## 脚本跑完，展开过的目录自己重扫
+
+同一个反馈里还有一条：跑完拉取 / 克隆脚本，文件树还是旧的，得手动点「刷新」。
+
+收尾逻辑本来就有（`lib/client.js` 里轮询到 `running !== true && killed !== true` 的那个块，用
+`runPushDoneRef` 保证同一个 `runId` 只处理一次），但它只做记账：单元推送记 `markUnitPushed`、整片拉取记
+`resyncPush`、纯推送重扫 `loadPushStatus`。文件树不在里面。补上的动作只有一句：
+
+```js
+if (value.code === 0) {
+    for (const path of Array.from(nodesRef.current.keys())) void loadLevel(path);
+}
+```
+
+- **只重扫「已经展开过的」层**（`nodesRef.current` 的 key 就是加载过的每一层目录）。没展开的层等用户点开时
+  自然是最新的，不必提前递归 —— 低代码工程目录不浅，无脑递归会很吵。
+- **顺带把 `runPushDoneRef.current = job.runId` 提到块首。** 原先它在三个分支里各写一遍，于是「退出码非 0
+  且不是推送」这条路谁都不写它，每次轮询都会重新进这个块。提上去之后语义也直白：这次 `runId` 的收尾，
+  成不成只做一遍。
+- 依赖数组相应补了 `loadLevel`。
+
+**验证**：`node --check lib/client.js` 通过。刷新页面后跑一次「拉取全部 API」看树会不会自己变。
+
+## 控制台高度「拖了没反应」：不是事件，是 flex 父级
+
+这条反馈来回了三轮。最后把三层彻底分开的，是抓手改成一行实时高度：
+
+| 现象 | 结论 |
+| --- | --- |
+| 抓手那行字根本不出现 | 新的 `lib/client.js` 没到浏览器（HMR / 刷新问题） |
+| 有字，但按下拖动数字不动 | 事件没到（`pointer` → `mouse` 那一次修的就是它） |
+| 数字变了，区域高度不变 | 事件与 state 都没问题，**卡在布局** |
+
+第三行就是当时的实况：抓手老老实实显示 `583px · 双击复位`，控制台上沿纹丝不动。
+
+**根因**：`renderScripts` 返回的最外层是 `CSS.detail`（`display: "flex"` + `flexDirection: "column"`），
+控制台是它的**最后一个孩子**。给一个 column 容器的最后一个孩子设 `height`，多出来的高度只能从**底部**
+溢出 —— 上沿以上的兄弟节点高度一点不变，所以「控制台上沿往上走」这件事根本不会发生。更早为了让
+`minHeight` 不顶破父级，还给 `detail` 加过 `overflow: "auto"`，溢出被它自己滚掉，连底部溢出都看不见。
+
+**改法**：
+
+1. `CSS.detail`（`lib/client.js` 约 `:569-574`）去掉 `overflow: "auto"`，回到原样；
+2. 新增 `CSS.detailScroll = { flex: "1 1 auto", minHeight: 0, overflow: "auto" }`（约 `:573-579`），
+   把控制台**上方**那一坨（路径栏 / 全局规范条 / 连接配置 / 失败提示 / 卡片网格）整段包进去；
+3. 控制台仍是 `detail` 的直接孩子；
+4. 控制台自己的高度：没拖过是 `50%`，拖过是 `Npx`（都写在 `consoleStyle` 里，`flex` 固定 `0 0 auto`）。
+
+控制台的高度是**固定**的，所以 `detailScroll` 写 `flex: "1 1 auto"` —— 余下的空间全归它：内容多时
+它收缩、把滚动条留给自己，内容少时它长高、把控制台顶到该在的位置（否则底部会空一截）。给控制台设
+`height` 而它上面那块不跟着收缩，就是最初「拖了没反应」的成因。
+
+> 默认的「一半」是后补的。第一版让控制台 `flex: "1 1 auto"` 吃满剩余空间：卡片一多，控制台被压成
+> 只剩标题栏一行；卡片一少，控制台又占掉大半个面板。落成 `height: "50%"` 之后两头都稳了。
+
+附带的好处：卡片一多，被压的是上面那块可滚动的区域，而不是控制台 —— 控制台有 `minHeight: 120` 顶着，
+「脚本输出一行都看不到」这个老毛病不会再回来。
+
+> 注：前面那节写的「`onGripDown` 里不能 `preventDefault`」是针对 pointer 事件的（它会连带挡掉 `dblclick`）。
+> 改用 mouse 事件后，在 `mousedown` 上 `preventDefault` 只取消选择 / 聚焦这类默认行为，`click` / `dblclick`
+> 照常派发，双击复位仍然有效。
+
+**验证**：`node --check lib/client.js` 通过。刷新页面，抓手应从「拖动调整高度 · 双击复位」变成
+`Npx · 双击复位`，拖的时候控制台上沿跟着走。
+
+## 「刷新」要连推送账本一起重读
+
+文件树和徽章是两套数据：树来自 `readdir`，徽章来自 host 侧的推送账本 + 校验。`refresh`
+（`lib/client.js:2450-2469`）以前只重扫树，于是「AI 在会话里改了文件」「别的工具改了文件」这类变化
+在树上看不出来 —— 目录结构可能变了，但 ✔ / 待推送 还是旧的。
+
+补的动作只有一句（外加依赖）：
+
+```js
+void loadPushStatus(dir);
+```
+
+`projectPushStatus` 一次调用返回整棵树的节点状态，host 侧还带 mtime 缓存（冷缓存约 1.3 秒、
+全命中约 0.5 秒），所以「刷新」多点几下也不心疼。切回「文件树」页签时本来就会重扫一次
+（`lib/client.js:5213-5220`），现在按钮和页签走的是同一条路。
+
+## 推了子页面，父目录为什么还是「待推送」
+
+用户实测：`pages/组织架构` 底下每个子页面都是 ✔，它自己却一直是橙的。对账本一看就对上了：
+
+```
+员工信息建档/index.html  账本 1791686320407  磁盘 1791686564869   （差 4 分钟）
+员工信息建档/page.js     账本 1791686320409  磁盘 1791686592413
+```
+
+（同一个目录里另有 6 个文件只差 1 毫秒 —— 那是探针用 PowerShell 取 `LastWriteTimeUtc` 的舍入
+误差，host 内部两边都走 `Math.round(stat.mtimeMs)`，同源，不用管。）
+
+**根因**：`snapshotDir` 是**递归**的（`snapshotOf` 会走遍子目录），所以父目录账本记的是**整棵子树**。
+子页面一改，父目录那一截就对不上；而推送单个单元时客户端传 `noAncestors: true`
+（`lib/client.js:1831-1832`，`markUnitPushed(unit, job.push === true)`），祖先快照**一动不动** ——
+于是父目录永远停在待推送。原来那条注释「推一个子页面并没有把父页面自己的内容推上去」在
+**非递归**快照下才成立。
+
+**改法**（`lib/index.js` 的 `projectMarkPushed`）：`noAncestors: true` 时不再「整棵不动」，
+而是**只把这次推上去的那棵子树在祖先快照里的那一截对齐到当前值**：
+
+```js
+const head = parts.slice(index).join("/") + "/";   // 子树相对这个祖先的路径前缀
+const files = Object.assign({}, state[key.key].files ?? {});
+for (const fileName of Object.keys(files)) {
+    if (fileName.startsWith(head)) delete files[fileName];
+}
+for (const [fileName, stamp] of Object.entries(selfFiles)) files[head + fileName] = stamp;
+state[key.key] = { files, pushedAt: Date.now() };
+```
+
+右键「标记已推送」走另一条路：整个祖先快照直接刷（用户手动宣布「这些我都推过了」）。
+
+**为什么不干脆整刷祖先**：祖先自己可能有没推的内容，整刷就是把它一并点绿 —— 那还是撒谎；
+而「整棵不动」又会留下这次的 bug。切片对齐两头都占。
+
+**探针验证**（`DSH_HOME` 指到临时目录，真实账本一个字没碰）：
+
+| 场景 | 期望 | 实测 |
+| --- | --- | --- |
+| 改了子页面，单独推它（`noAncestors`） | 父目录变 pushed | ✔ |
+| 父目录自己的 `page.json` 改了 | 父目录仍 dirty | ✔ |
+| 父目录下另一个兄弟页面没推，只推子页面 | 父目录仍 dirty | ✔ |
+| 右键「标记已推送」（整刷祖先） | 全绿 | ✔ |
+
+**注意**：这条改在 host 半边（`lib/index.js`），要**重启 dsh web** 才生效 —— client 半边才是刷新页面。
+
+## 推送前校验补上 HTML 结构 / page.json 结构检查
+
+用户故意把 `5853ca…/pages/组织架构/员工信息建档/index.html` 第 5 行改成
+`:inline="true" 666>>><`（尾巴上多了一串 `<`），「推送前校验」却报「没问题」。原来的
+`index.html` 只有两条规则：缺 `magicalDragScene`（warn `no-scene`）、属性值裸 `{{}}`
+（error `attr-mustache`）—— 模板编译都过不了的文件，这里一路绿灯。
+
+补了四块，都在 `lib/index.js`，插在 `mustacheRoot` 之后、`/* ---- 推送前静态校验 */` 之前：
+
+- `scanHtmlTags(html)`：手写扫描器。跳注释 / `<!…` / `<?…` / **裸 `<`**（文本里写 `a < b` 不算标签），
+  并跟踪引号状态 —— `v-if="a < b"` 里的 `<` 不许把标签截断。每项返回
+  `{ name, closing, start, attrs, selfClosed, truncated }`。
+- `malformedAttrNameAt(attrs)`：唯一判定是**属性名以数字开头**（`666`）。不查拼写、不限制字符集，
+  免得对着 `:mc-config`、`@click.stop`、`#query` 喊狼来了。
+- `htmlStructureIssues(html, push)`：压栈配对（`tag-close-unmatched` / `tag-not-closed`），
+  每个开标签再过一遍属性名。**故意不校验 HTML 内容模型** —— 那得靠真解析器，手工扫描器装不来。
+- `page-id-mismatch`：`mc-page-id` 与 `page.json` 的 `uuid` 对不上就报 —— 平台装配会把内容和页面对错。
+
+顺带把 `lineOf` 拆出 `lineAt(text, at)`（按字符下标算 1 基行号），`lineOf` 只剩转发。
+
+`page.json` 段从一条（缺 uuid）扩成五条：非对象 `not-object`、缺 uuid `uuid-missing`、
+uuid 不是 32 位十六进制 `uuid-format`（warn）、`name` 不是非空字符串 `name-missing`（warn）、
+`dir` 不是布尔 `dir-type`。阈值是照着这个工程 61 个真实 `page.json` 的字段分布定的 ——
+只有 `uuid` / `name` / `dir` 三个字段，`dir: true` 表示容器节点。
+
+### 翻车一次：属性名不能只按空白切
+
+第一版用 `/[^\s=]+/g` 切 token、跳过 `=` 后面那个，在 61 个页面目录上**误报 369 处**，全是
+`attr-malformed`，残渣长这样：`「20px;」`、`「100%;"」`、`「0,」`。
+
+原因：值里带空格。`title="共 20px;"` 被切成 `title="共"` 与 `20px;"`，后者以数字开头就成了假属性名。
+改成**连值一起切**：
+
+```js
+const pattern = /([^\s=]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?/g;
+```
+
+改完重跑：**61 个页面目录、60 个零问题、唯一一条 error 正是用户改坏的那处**；配对、`page-id`、
+`page.json` 三项在其余 60 个文件上零误报。
+
+### 探针的另一个坑
+
+生成探针副本（把 `const HANDLERS = {` 换成 `export const HANDLERS = {`）别用
+`Get-Content -Raw` + `Set-Content -Encoding utf8`：中文会写成 mojibake，正则里的中文随之炸成
+`SyntaxError: Invalid regular expression`。用
+`[System.IO.File]::ReadAllText($src, [System.Text.Encoding]::UTF8)` 配
+`[System.IO.File]::WriteAllText($dst, $text, (New-Object System.Text.UTF8Encoding $false))`。
+
+## 脚本跑完，已打开的源码标签页自己重读
+
+接「跑完重扫文件树」的下半截：树刷了，**已经打开的源码标签页却没换内容**。
+
+`openLocal`（`lib/client.js:2540-2557`）有意不重读 —— `const known = shots.find(…)` 之后
+`if (known !== undefined && known.status === "ready") return;`，注释写着「用户可能改过内容」。
+对「点同一个文件」是对的；可脚本是**直接改磁盘**的，`source-page-pull.js` 把线上版本覆盖下来之后，
+标签页里还是跑之前那份。更糟的是它会误导：照着旧内容按「保存」，就把刚拉下来的东西又写回去。
+
+改在脚本轮询的收尾块（`lib/client.js:1843+`，和重扫文件树同一个 `if (value.code === 0)`）：
+
+```js
+for (const shot of Array.from(shotsRef.current)) {
+    if (shot.status === "loading") continue;
+    const loaded = await call("projectReadFile", shot.path);
+    if (loaded.ok !== true) continue;
+    const loadedValue = loaded.value === undefined || loaded.value === null ? {} : loaded.value;
+    const text = typeof loadedValue.content === "string" ? loadedValue.content : "";
+    patchShot(shot.path, { status: "ready", content: text, saved: text, error: "" });
+}
+```
+
+三个要点：
+
+- **口径**：一律重读，用户改过但没写回的内容会丢。这是当初明确选的那条 —— 宁可丢一次未写回的
+  编辑，也不能让旧内容冒充最新版本。`saved` 必须一并复位，否则「改没改过」的判据（`content === saved`）
+  会一直显示「改过」。
+- **`shotsRef`**：这段跑在 `runJob` 那个 useEffect 的轮询里，依赖数组里没有 `shots`，闭包里的
+  `shots` 是这一轮开始时那份。和 `shotAtRef`（`lib/client.js:1302`）一个路数，加个 ref 转发。
+- **先拷再用**：`Array.from(shotsRef.current)` —— `await` 期间 state 可能又变了。
+
+**注意**：客户端半边，刷新页面就生效，不用重启。
 

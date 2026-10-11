@@ -155,13 +155,26 @@ dsh plugin --profile web add D:\path\to\dsh-project-panel
 | 按钮      | 作用                                       |
 | ------- | ---------------------------------------- |
 | 新建档案    | 存一个「服务器」（名称 / 地址 / 账号 / 密码）              |
-| 铺脚手架    | 把插件自带的 `source-*.js` / `utils.js` / `package.json` 铺到当前目录 |
+| 铺脚手架    | 把插件自带的 `source-*.js` / `utils.js` / `package.json` 和三份说明（`AGENTS.md` / `project-rules.md` / `help.md`）铺到当前目录 |
 | 写入 .env | 把选中的档案合并写进工作区的 `.env`                    |
 | 装依赖     | 装模板要用的 npm 包（只在缺的时候出现）                   |
 
 下面那行写着当前 `.env` 的现状（地址 / 账号 / 密码 / 项目）。`.env` 里的地址和选中档案对不上时，「写入 .env」会变红提醒。
 
 **项目清单**也能手动维护：选好服务器后点「＋ 项目」录一条（uuid + 名字），选中的那条可以「改名」「删除」。清单挂在**服务器档案**上，不挂文件树 —— 同一个服务器下的项目是同一批。另外 `.env` 注释里那批项目 uuid 会被自动捡出来当候选，两边在界面上合并显示。
+
+### 全局开发规范（给 AI 看的）
+
+除了往工作区里铺那三份说明，插件还能把一份**全局版**装到 `<DSH_HOME>/AGENTS.md`：
+
+| 按钮 | 作用                                                                             |
+| -- | ------------------------------------------------------------------------------ |
+| 安装 | 把插件自带的低代码平台规范装成全局指令。**文件已存在就一个字节都不动**，只说一句「已经存在，没有覆盖它」          |
+| 移除 | 只删**内容与插件模板逐字节相同**的那一份；用户改过、或本来就是用户自己的内容，就不动                                    |
+
+为什么需要它：低代码工程的工作区往往没有 `.git`，`dsh-agent-instructions` 一路向上找不到项目根，会把「会话工作目录」当成项目根 —— 项目根于是落在某个 `<projectUuid>/` 子目录上，**铺在工作区根的那份 `AGENTS.md` 反而读不到**。装在 `DSH_HOME` 下的这份是每个会话的注入基线，与工作目录在哪无关。
+
+文件树页签顶上，没装的时候会挂一条提示条，点「安装」即可。
 
 ---
 
@@ -187,12 +200,13 @@ dsh plugin --profile web add D:\path\to\dsh-project-panel
 | `<DSH_HOME>/project-config.json`     | 服务器档案（**含密码明文**）、每个工作区绑定的服务器与项目 |
 | `<DSH_HOME>/project-push-state.json` | 推送状态账本                          |
 | `<DSH_HOME>/project-env-backups/`    | 写 `.env` 前的备份，只留最近 10 份         |
+| `<DSH_HOME>/AGENTS.md`               | 全局开发规范（点「安装」才会创建；已存在则不动）    |
 
 `DSH_HOME` 默认是 `~/.dsh`，可用环境变量覆盖。
 
 写 `.env` 有两条规矩：**注释行一行不动**（平台爱把备选项目、备选地址注释着堆在同一份文件里，那是用户唯一的人肉清单），**内容没变化就一个字节都不碰**（否则跑一次脚本留一份一模一样的备份，10 份上限很快被垃圾挤满）。
 
-面板的能力边界：所有带路径参数的 RPC 都要求路径落在**已注册的工作区**内，否则拒掉；跑脚本时只认工作区根目录下那一层的 `source-[a-z0-9-]+\.js`。
+面板的能力边界：所有带路径参数的 RPC 都要求路径落在**已注册的工作区**内，否则拒掉；跑脚本时只认工作区根目录下那一层的 `source-[a-z0-9-]+\.js`。全局规范那两个 RPC 是例外 —— 它读写的是 `<DSH_HOME>/AGENTS.md`，跟工作区无关，也没有路径参数可传。
 
 ---
 
@@ -231,11 +245,11 @@ dsh plugin --profile web add D:\path\to\dsh-project-panel
 dsh-project-panel/
   package.json          依赖只有给脚手架用的那 4 个（axios / archiver / form-data / unzipper）
   cordis.patch.yml      insert: dsh-project-panel
-  lib/index.js          host 半边：desktopProject/* RPC（26 个）
+  lib/index.js          host 半边：desktopProject/* RPC（30 个）
   lib/client.js         client 半边：手写 ESM，改了刷新即生效
   lib/client.editor.js  ⚠ 构建产物（CodeMirror 6）—— 不要手改
   src/editor.js         编辑器分片的源码，npm run build:editor 生成上面那个
-  scaffold/             自带的工程脚本模板（source-*.js + utils.js + package.json）
+  scaffold/             自带的工程脚本模板 + 规范说明（source-*.js / utils.js / package.json / AGENTS.md / AGENTS.global.md / project-rules.md / help.md）
   NOTES.md              开发笔记：每个设计决定和踩过的坑
 ```
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-project-panel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH 工程面板：把低代码工程目录树搬进 web 端 —— 左栏常驻图标 + 中栏工程浏览器（多级文件树 / 推送状态 / 文件内容）。",
   "type": "module",
   "main": "lib/index.js",
@@ -41,6 +41,7 @@
       ]
     }
   },
+  "//permissions": "dshhub.permissions 只是给 dshhub 市场看的声明，DSH 运行时不据它拦截（本地也没有可查的枚举定义）。如实补一句：本插件还会写 DSH_HOME 下的这几个文件，它们都不在工作区里 —— project-config.json（服务器档案，含密码明文）、project-push-state.json（推送账本）、project-env-backups/（写 .env 前的备份）、AGENTS.md（用户级全局开发规范，只由「安装」按钮显式触发，已存在就一个字节都不动）。",
   "files": [
     "lib",
     "src",
