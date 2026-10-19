@@ -17,17 +17,13 @@ MagicalCoder 风格的工程是一套约定目录：页面由 `page.json` + `ind
 
 ## 一、安装
 
-从插件市场装（推荐）：
-
-```
-在 DSH 插件市场里搜「工程面板」或 dsh-project-panel
-```
-
-命令行装：
+命令行装（推荐）：
 
 ```bash
 dsh plugin --profile web add github:lzqzm/dsh-project-panel
 ```
+
+插件市场：已提交 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 收录，通过审核后可以直接在「设置 → 插件中心」里搜「工程面板」或 `dsh-project-panel`。
 
 本地开发（`link:` 安装，装的是你正在改的那份源码）：
 
