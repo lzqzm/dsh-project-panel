@@ -11,7 +11,7 @@ dsh-project-panel/
   cordis.patch.yml      insert: dsh-project-panel
   lib/index.js          host 半边：desktopProject/* RPC
   lib/client.js         client 半边：手写 ESM，改了刷新即生效
-  lib/client.editor.js  ⚠ 构建产物（644 KB，CodeMirror 6）—— 不要手改
+  lib/client.editor.js  ⚠ 构建产物（650 KB，CodeMirror 6）—— 不要手改
   src/editor.js         编辑器分片的源码，npm run build:editor 生成上面那个
   scaffold/             自带的平台脚本模板 + 规范（source-*.js / utils.js / package.json / AGENTS.md / AGENTS.global.md / project-rules.md / help.md）
   NOTES.md              这份笔记
@@ -506,7 +506,7 @@ const prevDirRef = useRef(null);   // 写成 useRef(dir) 就完了
 （官方 `dsh-client-ui-sidebar-documentpreview` 就是这么把 pdf / excel 拆出去的）。
 
 - `src/editor.js` 是分片源码，`npm run build:editor`（esbuild `--format=iife --minify`）
-  打包成 `lib/client.editor.js`，**644 KB，按需加载**。
+  打包成 `lib/client.editor.js`，**650 KB，按需加载**。
 - 主文件这边：`useEffect` 里 `require.async("./client.editor.js")` 拿到 `mod`；
   再调 `mod.createEditor(host, { path, doc, line, onChange })`，返回
   `{ getValue, setValue, revealLine, focus, destroy }`。
@@ -530,6 +530,75 @@ const prevDirRef = useRef(null);   // 写成 useRef(dir) 就完了
   javascript / typescript / html / css / json / markdown / python。
 - **不要图省事把分片内联回主文件**：那样每改一次面板代码都得重新打包，等于把
   「改完刷新就生效」的手感换掉了。
+
+### 0.3.0：手感对齐 VSCode（明暗自适应 + Tab 缩进）
+
+轮子早就是 CodeMirror 6 了，问题出在**配置**：`basicSetup` 只管「功能存在」，
+不管「看起来像不像个正经编辑器」。这一版补的就是这一层。
+
+- **明暗不靠 JS 猜**。宿主 `dsh-client-ui-theme/lib/index.js` 里是
+  ``return `${light}@media(prefers-color-scheme:dark){${dark}}` `` —— 所有
+  `--dsw-alias-*` 变量挂在 `body` 上，深色那套包在 `@media (prefers-color-scheme: dark)`
+  里。所以分片里也照这个来：**界面骨架用 `--dsw-alias-*`，语法 token 用自建的
+  `--dsp-code-*` 并同样给两套值**（`TOKEN_CSS` 注入到 `<head>`，带
+  `data-dsp-editor-tokens` 标记，幂等）。系统一切深色，编辑器立刻跟着变，不需要监听、
+  不需要重渲染，也不用去读 `getComputedStyle` 算亮度。
+- **`indentWithTab` 必须自己加**：`basicSetup` 不含它，缺了之后按 Tab 是把焦点
+  移出编辑区 —— 这是「手感差」里最劝退的一条。配 `EditorState.tabSize.of(4)`。
+- **搜索面板（Ctrl+F）要重上色**：CM 默认那套 `.cm-panel.cm-search` 在深色底上
+  基本看不见，`panelTheme` 里逐个改了输入框、按钮、标签的底色与边框。
+- **`scrollPastEnd()`**：滚到文件末尾还能再往下留一屏空白，视线不用贴着底边。
+- **字号 / 行高**：12px / 1.55 → **13px / 1.6**。分片、选行视图（`CSS.lines`）、
+  textarea 兜底（`CSS.editor`）、只读整文件（`CSS.code`）四处必须一致，否则在
+  同一面板里切换视图会看到字距跳动。`lib/client.js` 里为此抽了一个 `MONO` 常量
+  （`var(--dsw-font-mono, …)`），和脚本输出那两处已经用上的写法对齐。
+- **只读视图跟着一起改**：`CSS.gutter` 从 `opacity: 0.45` 换成
+  `color: var(--dsw-alias-label-tertiary, …)` —— opacity 会把行号连同底色一起变透明，
+  底下的选中行高亮透出来就发灰；`CSS.lineOn` 加一条
+  `box-shadow: inset 2px 0 0 0 var(--dsw-alias-brand-primary)`，和 CM 的 `activeLine`
+  一样，一眼看出「现在是这行」。
+- 分片 `VERSION` 0.2.0 → **0.3.0**，产物 650 KB → **650 KB**（`@codemirror/commands`
+  的 `indentWithTab` 和新的主题 CSS 都在这一截增量里）。
+
+### 0.3.1：折叠（两处，一处是 CodeMirror，一处根本不是）
+
+**只读源码区不是 CodeMirror**。`snippet.mode !== "edit"` 走的是 `renderCodeBody()` 手写的
+行列表（`CSS.lines` / `CSS.line` / `CSS.gutter` / `CSS.lineText`），所以它从来就没有折叠 ——
+在分片里加 `foldGutter()` 对它一点用都没有，用户看到的「折叠没做」指的是这里。
+
+- `lib/client.js` 里加了个纯函数 `foldRanges(lines)`：**只看缩进**算块，不去配对括号 ——
+  同一个视图里混着 HTML / JS / JSON / CSS，括号在字符串和注释里到处都是，配对只会更错。
+  两条规矩：① 空行归上一块（常见于分段注释之间）；② 块尾那个**同缩进的**闭合行
+  （`}` `]` `)` `</div>`）一起收进来，判据是 `indents[j] === indents[i]` + `/^(?:\s*[}\]\)]|\s*<\/)/`
+  —— 少了这个同缩进判断，内层块的每个闭合行都会被外层吞掉，整页每行都多画一个标记。
+- 折叠状态存在 `snippet.folded`（**每个文件各记各的**，切换标签不串），行尾显示
+  `⋯ N 行`。渲染时行号仍然是真实行号 —— 所以**折叠不影响「引用这段」**：拖选得到的
+  `@文件 L9-13` 依然是原文件里的 9 到 13 行，中间被折掉的行本来就该算在这个区间里。
+  （我一度以为会失灵，用户实测证伪。）
+- CodeMirror 那边本来就有折叠（`basicSetup` 含 `foldGutter()`，它返回的最后一个元素就是
+  `codeFolding()`，`foldKeymap` 也在）。真正的毛病是**标记看不见**：
+  `foldGutterDefaults` 的 `openText` 是 `"⌄"`（U+2304），这个字形在 ui-monospace / Consolas
+  这类等宽字体里普遍没有，浏览器就画个空白。CSS 里把 `.cm-foldGutter span` 的字体换成
+  `system-ui` 栈 + 提亮 + hover 品牌色即好；`.cm-foldPlaceholder` 另给了深色配色
+  （默认 `#eee` 白底在深色主题里像贴了张白纸）。
+  **不能为了加折叠再 `foldGutter()` 一次** —— 会渲染出两条 gutter。
+- **最贵的坑（症状极具欺骗性）**：语法配色表里写了 `tags.selfName`，而 `@lezer/highlight`
+  只有 `tags.self`。`HighlightStyle.define` 是**模块顶层**执行的，`tagHighlighter` 里
+  `map[tag.id]` 拿到 `undefined` 直接抛 `TypeError`；于是整个分片没走到
+  `window.__ModuleLoader__.load(...)`，宿主只报
+  `bundle …/client.editor.js?rev=… loaded without registering "dsh-project-panel/client.editor.js"`，
+  面板静默退回内置 textarea —— 表现是「编辑模式下不能折叠」，跟折叠功能本身毫无关系。
+  三条后续：① 名字改成 `tags.self` 并归到关键字那组；② `TOKEN_SPECS` 建完统一
+  `filter(tag => tag != null)` 一遍，写错顶多不上色、不会再拉垮整个编辑器；
+  ③ 探针把 `src/editor.js` 里所有 `tags.xxx` 与真对象对一遍（先摘注释，否则注释里的
+  例子会被当成真的用到）。
+- **验证分片是「能注册」而不只是「能解析」**：`node --check` 对这种情况毫无反应。办法是
+  在 Node 里开个 sandbox，给个假的 `window.__ModuleLoader__.load`，把产物 `runInContext`
+  执行一遍 —— 抛错会带可读栈，没抛错就能看到 `id / chunk / factory` 三件套。打包时加
+  `--minify=false` 再跑一次，栈里就是源码行号而不是第 11 行第 64029 列。
+- 顺带记两条 PowerShell 老坑（这一轮又踩了）：`Get-Content -Raw` 按 ANSI 解码，会把
+  `⌄` `›` 读坏；`[System.IO.File]::ReadAllText('.\x.md', …)` 的相对路径按**进程**当前目录
+  解析，不是 `cd` 之后的目录，要用绝对路径。
 
 ## 面板内编辑文件
 
