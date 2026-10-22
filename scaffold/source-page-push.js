@@ -242,6 +242,39 @@ function createZip(sourceDir, outputPath) {
     });
 }
 
+/**
+ * 页面推送专用登录：固定走设计器（server）登录。
+ * 注意不能复用 utils.resolveLogin：它在 .env 配了 ADMIN_USERNAME/ADMIN_PASSWORD 时
+ * 会改用后台管理（manager）登录，而 page-import 不认 manager 会话，
+ * 会稳定返回「业务异常[-2]登录已超时，请重新登录」。
+ */
+async function loginForPagePush() {
+    const loginResponse = await axios.post(
+        `${SERVER_URL}/youyaboot-admin/magical_lowcode/server/web/login`,
+        { userName: USERNAME, password: PASSWORD },
+        { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    const setCookie = loginResponse.headers['set-cookie'];
+    let cookie = '';
+    if (Array.isArray(setCookie)) {
+        cookie = setCookie.map(c => c.split(';')[0]).join('; ');
+    } else if (typeof setCookie === 'string') {
+        cookie = setCookie.split(';')[0];
+    }
+
+    if (!(loginResponse.data && (loginResponse.data.code === 0 || loginResponse.data.flag === true))) {
+        throw new Error(`登录返回异常: ${JSON.stringify(loginResponse.data)}`);
+    }
+    if (!cookie) {
+        // 登录说成功却没给会话 Cookie，后续上传必然被判未登录，
+        // 这里直接报出真实原因，避免被误导成「登录已超时」。
+        throw new Error('登录接口未返回会话 Cookie（Set-Cookie 缺失），无法继续上传');
+    }
+
+    return cookie;
+}
+
 async function main() {
     console.log('========================================');
     console.log('  推送页面到线上');
@@ -253,6 +286,7 @@ async function main() {
     console.log('');
 
     let tempDir = null;
+    let tempZipPath = null;
 
     try {
         // 检查 pages 目录
@@ -265,29 +299,13 @@ async function main() {
         console.log('[1/5] 登录...');
         
         // Cookie 存储
+        // 必须用设计器（server）会话：page-import 若收到后台管理（manager）会话，
+        // 服务端会稳定返回「业务异常[-2]登录已超时，请重新登录」，所以不复用 utils.resolveLogin。
         let cookieString = '';
-        
+
         try {
-            // 业务接口（openapi / crud）只认后台管理会话，走 utils.resolveLogin 决定用哪套登录
-            const cfg = utils.resolveLogin(SERVER_URL);
-            const loginResponse = await axios.post(cfg.url, cfg.body, {
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            // 从响应头中提取 cookie
-            const setCookie = loginResponse.headers['set-cookie'];
-            if (setCookie && Array.isArray(setCookie)) {
-                cookieString = setCookie.map(c => c.split(';')[0]).join('; ');
-            }
-
-            if (loginResponse.data && (loginResponse.data.code === 0 || loginResponse.data.flag === true)) {
-                console.log('✓ 登录成功');
-            } else {
-                console.error(`✗ 登录失败: ${JSON.stringify(loginResponse.data)}`);
-                process.exit(1);
-            }
+            cookieString = await loginForPagePush();
+            console.log('✓ 登录成功');
         } catch (error) {
             console.error(`✗ 登录失败: ${error.message}`);
             process.exit(1);
@@ -439,7 +457,7 @@ async function main() {
         console.log('');
         console.log('[4/5] 打包页面...');
 
-        const tempZipPath = path.join(projectDir, `.temp-push-page-${Date.now()}.zip`);
+        tempZipPath = path.join(projectDir, `.temp-push-page-${Date.now()}.zip`);
         await createZip(tempPagesDir, tempZipPath);
 
         const fileSize = fs.statSync(tempZipPath).size;
@@ -454,26 +472,50 @@ async function main() {
 
         const importUrl = `${SERVER_URL}/youyaboot-admin/magicalcoder/user/project/page-import?projectUuid=${PROJECT_UUID}&pageUuid=${targetUuid || ''}`;
 
-        // 使用 axios 上传文件
-        const formData = new (require('form-data'))();
-        formData.append('file', fs.createReadStream(tempZipPath));
+        // 上传（会话失效时自动重新登录并重试一次）
+        const uploadOnce = async () => {
+            const formData = new (require('form-data'))();
+            formData.append('file', fs.createReadStream(tempZipPath));
 
-        const uploadResponse = await axios.post(importUrl, formData, {
-            headers: {
-                ...formData.getHeaders(),
-                'Cookie': cookieString
+            const resp = await axios.post(importUrl, formData, {
+                headers: {
+                    ...formData.getHeaders(),
+                    'Cookie': cookieString
+                }
+            });
+            return resp.data;
+        };
+
+        const isUploadOk = (r) => !!(r && (r.code === 0 || r.flag === true));
+
+        let result = await uploadOnce();
+        if (!isUploadOk(result)) {
+            const msg = String((result && result.msg) || '');
+            const sessionExpired = !!(result && (
+                result.code === -2 ||
+                msg.includes('业务异常[-2]') ||
+                msg.includes('登录已超时')
+            ));
+            if (sessionExpired) {
+                console.log('⚠ 会话已失效，重新登录后重试...');
+                try {
+                    cookieString = await loginForPagePush();
+                } catch (error) {
+                    console.error(`✗ 重新登录失败: ${error.message}`);
+                    process.exit(1);
+                }
+                result = await uploadOnce();
             }
-        });
+        }
 
         // 清理临时文件
         fs.unlinkSync(tempZipPath);
-        fs.rmdirSync(tempDir, { recursive: true });
+        fs.rmSync(tempDir, { recursive: true, force: true });
 
-        const result = uploadResponse.data;
-        if (result.code === 0 || result.flag === true) {
+        if (isUploadOk(result)) {
             console.log('✓ 上传成功');
         } else {
-            console.error(`✗ 上传失败: ${result.msg || JSON.stringify(result)}`);
+            console.error(`✗ 上传失败: ${(result && result.msg) || JSON.stringify(result)}`);
             process.exit(1);
         }
 
@@ -491,9 +533,12 @@ async function main() {
         console.error('');
         console.error('❌ 推送失败:', error.message);
 
-        // 清理临时目录
+        // 清理临时目录和压缩包（失败路径也要清，否则工程目录会残留 .temp-push-page-*.zip）
         if (tempDir && fs.existsSync(tempDir)) {
-            fs.rmdirSync(tempDir, { recursive: true });
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+        if (tempZipPath && fs.existsSync(tempZipPath)) {
+            try { fs.unlinkSync(tempZipPath); } catch { /* 清理失败不掩盖原始错误 */ }
         }
         process.exit(1);
     }
