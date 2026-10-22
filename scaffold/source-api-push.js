@@ -98,7 +98,7 @@ if (!pushAll && !apiId) {
 // 确定项目目录
 let projectDir;
 if (PROJECT_UUID) {
-    projectDir = path.join(__dirname, PROJECT_UUID);
+    projectDir = utils.resolveProjectDir(PROJECT_UUID, { create: false });
 } else {
     // 尝试从 manifest.json 获取
     const dirs = fs.readdirSync(__dirname);

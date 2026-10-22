@@ -37,7 +37,7 @@ if (!PROJECT_UUID) {
     process.exit(1);
 }
 
-const PROJECT_DIR = path.join(__dirname, PROJECT_UUID);
+const PROJECT_DIR = utils.resolveProjectDir(PROJECT_UUID, { create: false });
 
 function runScript(scriptName, args) {
     const scriptPath = path.join(__dirname, scriptName);

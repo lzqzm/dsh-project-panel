@@ -37,7 +37,7 @@ if (!PROJECT_UUID) {
     process.exit(1);
 }
 
-const OUTPUT_DIR = path.join(__dirname, PROJECT_UUID);
+const OUTPUT_DIR = utils.resolveProjectDir(PROJECT_UUID);
 const DATABASES_DIR = path.join(OUTPUT_DIR, 'databases');
 
 // Cookie 存储

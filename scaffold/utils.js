@@ -49,6 +49,117 @@ function generateUUID() {
 }
 
 /**
+ * 工程目录里的来源标记：记住这个目录是从哪台服务器上拉的。
+ *
+ * 项目 uuid 只在一台服务器内唯一。两台服务器上有同一个 uuid 的工程时，以前两边
+ * 都落进 `<uuid>/`，后拉的直接盖掉先拉的，连 `.cookies` 都共用（会话还会串）。
+ * 现在目录名按来源服务器区分，这个文件负责「认得出来」：同名冲突时靠它挑目录。
+ */
+const SOURCE_FILE = '.project-source.json';
+
+/** 服务器地址 → 能当目录名用的短标识（`http://1.2.3.4:28080` → `1.2.3.4-28080`）。 */
+function serverKey(serverUrl) {
+    const raw = String(serverUrl || '').trim();
+    if (raw === '') return '';
+    const hostPort = raw.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, '').split('/')[0];
+    const dotted = hostPort.replace(/:(\d+)$/, '-$1');
+    return dotted.replace(/[^A-Za-z0-9._-]/g, '_');
+}
+
+/** 读工程目录的来源标记；没有 / 坏了都当没有。 */
+function readSource(dir) {
+    const file = path.join(dir, SOURCE_FILE);
+    if (!fs.existsSync(file)) return null;
+    try {
+        const info = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        if (info === null || typeof info !== 'object') return null;
+        return info;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * 写来源标记（合并已有键）。
+ *
+ * 内容没变就不落盘 —— 每个脚本都会调一次 resolveProjectDir，每次都重写文件
+ * 会让 mtime 一直在动，推送账本会把它当成「刚改过」。
+ */
+function writeSource(dir, info) {
+    const file = path.join(dir, SOURCE_FILE);
+    const merged = Object.assign({}, readSource(dir) || {}, info);
+    const text = JSON.stringify(merged, null, 2) + '\n';
+    try {
+        if (fs.existsSync(file) && fs.readFileSync(file, 'utf-8') === text) return merged;
+    } catch (e) { /* 读不动就照写 */ }
+    fs.writeFileSync(file, text, 'utf-8');
+    return merged;
+}
+
+/**
+ * 决定这次的项目目录 —— 同 uuid 不同服务器分开放。
+ *
+ * 规则（先到先得，老工作区原地兼容）：
+ * 1. 已存在、来源就是当前服务器的目录 → 用它（刷新，不新建）；
+ * 2. 已存在的 `<uuid>/` 没有来源标记（老工作区）→ 认领它并补写标记；
+ * 3. 都没有 → `<uuid>/`；只有这个名字被别的服务器占了，才用 `<uuid>@主机-端口/`。
+ *
+ * `create: false` 给推送用：目录不存在就别造空的，让调用方按「请先拉取」报错。
+ */
+function resolveProjectDir(projectUuid, options) {
+    const uuid = String(projectUuid || '').trim();
+    if (uuid === '') throw new Error('resolveProjectDir: 缺少项目 uuid');
+    const opts = options === undefined || options === null ? {} : options;
+    const create = opts.create !== false;
+    const serverUrl = opts.serverUrl === undefined ? process.env.SERVER_URL || '' : String(opts.serverUrl);
+    const here = serverUrl.trim().replace(/\/+$/, '');
+
+    const isDir = (full) => {
+        try {
+            return fs.statSync(full).isDirectory();
+        } catch (e) {
+            return false;
+        }
+    };
+
+    let names = [];
+    try {
+        names = fs.readdirSync(__dirname).filter((name) => {
+            if (name !== uuid && name.indexOf(uuid + '@') !== 0) return false;
+            return isDir(path.join(__dirname, name));
+        });
+    } catch (e) {
+        names = [];
+    }
+
+    /* 1. 来源对得上 —— 正常刷新/推送走这条。 */
+    for (const name of names) {
+        const info = readSource(path.join(__dirname, name));
+        if (info === null) continue;
+        if (String(info.serverUrl || '').replace(/\/+$/, '') === here) return path.join(__dirname, name);
+    }
+
+    /* 2. 老目录认领：没有标记的 `<uuid>/` 就是它的，补写一份免得下次判不出来。 */
+    const plain = path.join(__dirname, uuid);
+    if (names.indexOf(uuid) >= 0 && readSource(plain) === null) {
+        writeSource(plain, { serverUrl: here, projectUuid: uuid });
+        return plain;
+    }
+
+    /* 3. 新建；`<uuid>/` 被别的服务器占着才加后缀。 */
+    let dir = plain;
+    if (names.length > 0 && isDir(plain)) {
+        const key = serverKey(here) === '' ? 'unknown' : serverKey(here);
+        dir = path.join(__dirname, uuid + '@' + key);
+    }
+    if (create === true) {
+        if (!isDir(dir)) fs.mkdirSync(dir, { recursive: true });
+        writeSource(dir, { serverUrl: here, projectUuid: uuid });
+    }
+    return dir;
+}
+
+/**
  * 平台登录项目常量：后台管理登录的 projectUuid 必须用它（= 平台登录页 URL 上的 pid）。
  *
  * 用页面 / 项目自己的 uuid 会得到 `{"flag":false,"code":-1,"desc":"用户名或密码错误"}` ——
@@ -386,8 +497,13 @@ function getTimestamp() {
 
 // 导出所有工具函数
 module.exports = {
+    SOURCE_FILE,
     loadEnv,
     generateUUID,
+    serverKey,
+    readSource,
+    writeSource,
+    resolveProjectDir,
     resolveLogin,
     login,
     ensureLogin,
