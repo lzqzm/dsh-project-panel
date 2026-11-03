@@ -97,12 +97,17 @@ function writeSource(dir, info) {
 }
 
 /**
- * 决定这次的项目目录 —— 同 uuid 不同服务器分开放。
+ * 决定这次的项目目录 —— 每台服务器一个文件夹，下面再按项目 uuid 分。
  *
- * 规则（先到先得，老工作区原地兼容）：
- * 1. 已存在、来源就是当前服务器的目录 → 用它（刷新，不新建）；
- * 2. 已存在的 `<uuid>/` 没有来源标记（老工作区）→ 认领它并补写标记；
- * 3. 都没有 → `<uuid>/`；只有这个名字被别的服务器占了，才用 `<uuid>@主机-端口/`。
+ * 目录形如 `<工作区>/<主机-端口>/<项目 uuid>/`：
+ *   1. 同一台服务器上的不同项目 → 各占一个 uuid 目录；
+ *   2. 不同服务器上的同名 / 同 uuid 项目 → 各在自己的服务器文件夹里，永远不打架
+ *      （老办法是给目录加 `@主机-端口` 后缀，一长串挤在根上，看不出谁是谁）。
+ *
+ * 老工作区（根下直接是 `<uuid>/` 或 `<uuid>@主机-端口/`）不用手工搬：下次拉取 / 推送
+ * 走到这里时整个目录 rename 进 `<主机-端口>/`，`.project-source.json` 跟着一起走，
+ * 来源标记和 `.cookies` 都不会丢。搬不动（被占用 / 没权限）就原地接着用，
+ * 不让推送直接失败。
  *
  * `create: false` 给推送用：目录不存在就别造空的，让调用方按「请先拉取」报错。
  */
@@ -113,6 +118,7 @@ function resolveProjectDir(projectUuid, options) {
     const create = opts.create !== false;
     const serverUrl = opts.serverUrl === undefined ? process.env.SERVER_URL || '' : String(opts.serverUrl);
     const here = serverUrl.trim().replace(/\/+$/, '');
+    const key = serverKey(here) === '' ? 'unknown' : serverKey(here);
 
     const isDir = (full) => {
         try {
@@ -121,42 +127,73 @@ function resolveProjectDir(projectUuid, options) {
             return false;
         }
     };
+    /**
+     * 这个目录是谁拉的：true = 当前服务器，false = 别的服务器，null = 没标记（老目录）。
+     * 没标记的老目录当成「可能是我的」—— 由调用处决定要不要认领。
+     */
+    const sameServer = (dir) => {
+        const info = readSource(dir);
+        if (info === null) return null;
+        return String(info.serverUrl || '').replace(/\/+$/, '') === here;
+    };
 
-    let names = [];
+    const serverDir = path.join(__dirname, key);
+    const target = path.join(serverDir, uuid);
+
+    /* 1. 已经在 `<主机-端口>/<uuid>/` 里 —— 正常刷新 / 推送走这条。 */
+    if (isDir(target)) {
+        if (sameServer(target) !== false) {
+            writeSource(target, { serverUrl: here, projectUuid: uuid, serverKey: key });
+        }
+        /* 被别的服务器占着（文件夹名就是服务器，几乎不可能）也照样用它，别覆盖标记。 */
+        return target;
+    }
+
+    /* 2. 老结构：把根下那个 `<uuid>/` / `<uuid>@key/` 搬进服务器文件夹。 */
+    let legacy = [];
     try {
-        names = fs.readdirSync(__dirname).filter((name) => {
+        legacy = fs.readdirSync(__dirname).filter((name) => {
             if (name !== uuid && name.indexOf(uuid + '@') !== 0) return false;
             return isDir(path.join(__dirname, name));
         });
     } catch (e) {
-        names = [];
+        legacy = [];
+    }
+    /*
+        同一台服务器可能留下好几个旧目录（老版 `<uuid>/` 和 `<uuid>@主机-端口/` 并存）。
+        只搬第一个进服务器文件夹，剩下的不进账、也不替你删 —— 那里面可能有没推上去的
+        改动，删不删是人的决定。这里只把话说到位。
+    */
+    const mine = [];
+    for (const name of legacy) {
+        if (sameServer(path.join(__dirname, name)) === false) continue; /* 明确是别的服务器的，不碰 */
+        mine.push(name);
+    }
+    for (const name of mine) {
+        const old = path.join(__dirname, name);
+        try {
+            fs.mkdirSync(serverDir, { recursive: true });
+            fs.renameSync(old, target);
+        } catch (e) {
+            /* 搬不动就原地用：老工作区照样能推能拉，只是结构暂时不整齐。 */
+            writeSource(old, { serverUrl: here, projectUuid: uuid });
+            return old;
+        }
+        writeSource(target, { serverUrl: here, projectUuid: uuid, serverKey: key });
+        const rest = mine.filter((other) => other !== name);
+        if (rest.length > 0) {
+            console.warn(`⚠ 这个工程在根上有 ${mine.length} 个旧目录，这次只搬了 "${name}"。`);
+            console.warn(`  还剩 ${rest.map((item) => '"' + item + '"').join('、')} 在根上；确认里面的改动不需要后手工删掉即可（脚本不会替你删）。`);
+        }
+        return target;
     }
 
-    /* 1. 来源对得上 —— 正常刷新/推送走这条。 */
-    for (const name of names) {
-        const info = readSource(path.join(__dirname, name));
-        if (info === null) continue;
-        if (String(info.serverUrl || '').replace(/\/+$/, '') === here) return path.join(__dirname, name);
-    }
-
-    /* 2. 老目录认领：没有标记的 `<uuid>/` 就是它的，补写一份免得下次判不出来。 */
-    const plain = path.join(__dirname, uuid);
-    if (names.indexOf(uuid) >= 0 && readSource(plain) === null) {
-        writeSource(plain, { serverUrl: here, projectUuid: uuid });
-        return plain;
-    }
-
-    /* 3. 新建；`<uuid>/` 被别的服务器占着才加后缀。 */
-    let dir = plain;
-    if (names.length > 0 && isDir(plain)) {
-        const key = serverKey(here) === '' ? 'unknown' : serverKey(here);
-        dir = path.join(__dirname, uuid + '@' + key);
-    }
+    /* 3. 都没有 —— 新建（`create: false` 时不建空目录，让调用方报「请先拉取」）。 */
     if (create === true) {
-        if (!isDir(dir)) fs.mkdirSync(dir, { recursive: true });
-        writeSource(dir, { serverUrl: here, projectUuid: uuid });
+        fs.mkdirSync(target, { recursive: true });
+        writeSource(target, { serverUrl: here, projectUuid: uuid, serverKey: key });
     }
-    return dir;
+    return target;
 }
 
 /**

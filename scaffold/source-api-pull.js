@@ -272,22 +272,38 @@ function copyDir(srcDir, destDir) {
     }
 }
 
-// 写入 JSON 文件
+// 写入 JSON 文件 —— 内容没变就不落盘
+//
+// 为什么不再无脑 writeFileSync：推送账本记的是**每个文件的 mtime**。单拉一个 API
+// 也会顺手把父分组的 meta.json 重写一遍（内容一个字都没变），mtime 一漂，面板就
+// 认为那个分组「改过」—— 于是分组、乃至整个 apis 永远停在「待推送」。用户看到的
+// 就是「子项都推完了，父节点还是橙的」。
+// 先读一遍比一下，一样就跳过；返回 true 表示真写了。
 function writeJson(filePath, data) {
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    const text = JSON.stringify(data, null, 2);
+    try {
+        if (fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf-8') === text) return false;
+    } catch (e) { /* 读不动就照写 */ }
+    fs.writeFileSync(filePath, text, 'utf-8');
+    return true;
 }
 
-// 写入文本文件
+// 写入文本文件 —— 同样先比内容，避免白改 mtime（理由见上）
 function writeText(filePath, content) {
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(filePath, content, 'utf-8');
+    const text = String(content);
+    try {
+        if (fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf-8') === text) return false;
+    } catch (e) { /* 读不动就照写 */ }
+    fs.writeFileSync(filePath, text, 'utf-8');
+    return true;
 }
 
 // 拉取目录

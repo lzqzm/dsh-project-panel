@@ -28,16 +28,17 @@
 
 ```
 <工作区>/
-├── <projectUuid>/          # 每个 uuid 目录 = 一个低代码工程
-│   ├── apis/               # 每个 API 一个目录：meta.json + script.js
-│   ├── databases/          # 每个数据库一个目录，每张表一个 .json
-│   └── pages/              # 每个页面一个目录：index.html / page.css / page.js / page.json
-├── project-rules.md        # 完整开发规范（详细条款看这里）
-├── help.md                 # source-*.js 同步 / 推送脚本说明
-└── source-*.js             # 拉取、推送脚本
+├── <主机-端口>/             # 按来源服务器分文件夹，http://1.2.3.4:28080 → 1.2.3.4-28080
+│   └── <projectUuid>/       # 每个 uuid 目录 = 一个低代码工程
+│       ├── apis/            # 每个 API 一个目录：meta.json + script.js
+│       ├── databases/       # 每个数据库一个目录，每张表一个 .json
+│       └── pages/           # 每个页面一个目录：index.html / page.css / page.js / page.json
+├── project-rules.md         # 完整开发规范（详细条款看这里）
+├── help.md                  # source-*.js 同步 / 推送脚本说明
+└── source-*.js              # 拉取、推送脚本
 ```
 
-动任何文件之前，先确认它属于哪个 `<projectUuid>/` —— 路径写错就会改到别的工程。
+动任何文件之前，先确认它属于哪个 `<主机-端口>/<projectUuid>/` —— 路径写错就会改到别的工程。
 
 ## 先读工作区根目录下的规范
 

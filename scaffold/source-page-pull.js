@@ -436,7 +436,8 @@ function copyDir(srcDir, destDir, filterJson) {
                     const content = fs.readFileSync(srcPath, 'utf-8');
                     const json = JSON.parse(content);
                     const filtered = filterJson(json);
-                    fs.writeFileSync(destPath, JSON.stringify(filtered, null, 2), 'utf-8');
+                    /* 走 writeJson：内容没变就不落盘，别白改 mtime（见 writeJson 的注释）。 */
+                    writeJson(destPath, filtered);
                 } catch (e) {
                     fs.copyFileSync(srcPath, destPath);
                 }
@@ -447,13 +448,22 @@ function copyDir(srcDir, destDir, filterJson) {
     }
 }
 
-// 写入 JSON 文件
+// 写入 JSON 文件 —— 内容没变就不落盘
+//
+// 推送账本记的是每个文件的 mtime：拉一个页面时顺手重写祖先目录的 page.json，
+// 内容明明一样，mtime 一漂就会让父目录永远停在「已改动」。
+// 返回 true 表示真写了。
 function writeJson(filePath, data) {
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    const text = JSON.stringify(data, null, 2);
+    try {
+        if (fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf-8') === text) return false;
+    } catch (e) { /* 读不动就照写 */ }
+    fs.writeFileSync(filePath, text, 'utf-8');
+    return true;
 }
 
 // 构建祖先目录（只创建目录和简单的 page.json）

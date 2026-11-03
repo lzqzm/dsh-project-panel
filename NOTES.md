@@ -2597,17 +2597,26 @@ ADMIN_USERNAME && ADMIN_PASSWORD 都在且非空
 
 ### 怎么分
 
-规则写在 `scaffold/utils.js` 的 `resolveProjectDir(projectUuid, { serverUrl?, create? })`，
-先到先得、老工作区原地不动：
+规则写在 `scaffold/utils.js` 的 `resolveProjectDir(projectUuid, { serverUrl?, create? })`：
+**先按来源服务器分文件夹，再放工程** —— `<工作区>/<主机-端口>/<uuid>/`。
 
 | 情况 | 落到哪个目录 |
 | --- | --- |
-| 还没有 | `<uuid>/` |
-| `<uuid>/` 属于当前 `SERVER_URL` | 还是它（正常刷新） |
-| `<uuid>/` 属于另一台 | `<uuid>@主机-端口/`，例：`1f2e3d4c…@203.0.113.10-28080/` |
-| 有 `<uuid>/` 但没标记（老工作区） | 认领它并补写标记，不搬家 |
+| 还没有 | `<主机-端口>/<uuid>/` |
+| 老结构 `<uuid>/`（没有标记） | 迁移过去 |
+| 老结构 `<uuid>/`，标记属于当前 `SERVER_URL` | 迁移过去 |
+| 老结构 `<uuid>/`，标记属于另一台 | 不动它，按当前服务器另建 |
+| 上一版的 `<uuid>@主机-端口/`（属于当前服务器） | 迁移过去 |
 
-判据是工程目录里的 `.project-source.json`（`{"serverUrl","projectUuid"}`）。写成文件而不是
+文件夹名就是 `serverKey()`：`http://203.0.113.10:28080` → `203.0.113.10-28080`。上一版用的是
+「撞名才加 `@主机-端口` 后缀」，问题是同一个工程在两台服务器上时，一个叫 `<uuid>/`、
+一个叫 `<uuid>@…/`，看着像两个不相干的目录；分文件夹之后「服务器」成了结构层，面板里能按
+档案备注名显示（没维护备注就显示文件夹名），推送状态扫描也按 `<服务器>/<uuid>` 两级下去。
+
+迁移是 `mkdir serverDir` + `fs.renameSync(old, target)`。**rename 失败就原地返回老目录并补标记**，
+不让「搬不动」（编辑器占着文件）演变成推送失败。
+
+判据是工程目录里的 `.project-source.json`（`{"serverUrl","projectUuid","serverKey"}`）。写成文件而不是
 从 `.env` 现推，是因为**同一个工作区会换绑定服务器**，目录自己在哪儿、属于谁，得它自己说了算。
 
 `writeSource` 内容没变就不落盘 —— 每个脚本都要调一次 resolve，每次都重写文件会让 mtime 一直动，
@@ -2618,25 +2627,199 @@ ADMIN_USERNAME && ADMIN_PASSWORD 都在且非空
 - **推送不能造空目录**。`resolveProjectDir` 默认 `create: true`，推送脚本一律传
   `{ create: false }`：目录不存在就让原来的「请先运行 source-pull.js」报错照旧生效，
   否则推一个从没拉过的项目会先在本地凭空建一堆空目录，看着像推成功了。
-- **面板侧也要认后缀**。`lib/client.js` 的 `PROJECT_DIR_RE` 和 `lib/index.js` 的
-  `L1_PROJECT_NAME_RE` 都只认 32 位十六进制，不改的话带后缀的目录会被当成普通目录 ——
-  表现为备注不显示、结构层不禁改名、推送状态整片「未推送」。另外 `pageProjectOf` 判到
-  `@` 之后要**只返回纯 uuid**：预览页地址里的 `pid` 认的是项目 uuid，后缀纯粹是本地目录的区分。
+- **面板侧要认两级**。`lib/client.js` 的 `PROJECT_DIR_RE` / `isProjectDir` 现在认两种：
+  `<根>/<uuid>`（老）与 `<根>/<服务器>/<uuid>`（新）；`isStructurePath`、`pageProjectOf`
+  用同一个 `base` 下标往下走。`lib/index.js` 的推送状态扫描也改成两级：根下目录先试
+  `L1_PROJECT_NAME_RE`，不匹配再按 `SERVER_DIR_NAME_RE` 当服务器文件夹，读一层子目录。
+  `pageProjectOf` 返回的仍是**纯 uuid**（预览页地址里的 `pid` 认的是项目 uuid）。
 
 备注（`.dsh-project-names.json`）和推送账本都按**完整目录名**记，所以两台服务器上的同名工程
 各记各的，不会互相串。
 
 ### 验证
 
-- `scaffold/utils.js` 的 `resolveProjectDir` 探针 **23/23**：首次建目录、同服务器复用、
-  换服务器加后缀、来回各回各家、老目录认领、`create: false` 不建目录/不写标记/指向不存在的后缀目录、
-  标记没变不重写 mtime、尾斜杠不影响识别。
-- `lib/client.js` 的 `pageProjectOf` + `PROJECT_DIR_RE` 探针 **13/13**：带后缀/正斜杠/不是 pages 层/
-  太浅/非 uuid 目录/空后缀/带斜杠后缀。
+- `scaffold/utils.js` 的 `resolveProjectDir` 探针 **22/22**：新工作区建 `<服务器>/<uuid>`、
+  老 `<uuid>/` 无标记时迁移、老目录标记属于别的服务器时不迁移且另建、上一版 `@` 后缀目录
+  同服务器时迁移、`create: false` 不建目录、同服务器第二个工程共用服务器文件夹、`serverKey`
+  四种输入。
+- 实跑：`D:\project\PythonWorkSpace\AI\magicalcoder_ai\localdev` 里拉一个页面，老目录
+  `5c6b7a8d…/` 消失、新目录 `203.0.113.10-18080\5c6b7a8d…\` 出现，`.project-source.json` 内容正确。
 - 探针都在临时目录里跑（复制一份 `utils.js` 过去、`NODE_PATH` 指插件根），跑完删掉。
 
 ### 老目录的局限
 
 认领规则只能保证「以后不再撞」，判不出历史上那个目录到底是从哪台拉的 —— 它没有标记。
 第一次拉取时 `.env` 指向哪台，就记成哪台。要是某个目录其实来自另一台，切到那台之后**重新拉一次**
-最省事；真错了也不会丢东西，`resolveProjectDir` 顶多多建一个带后缀的目录。
+最省事。
+
+---
+
+## 0.1.6：文件树推送按钮 / 气泡提示 / 隐藏点文件 / 两处根因（2026-11-03）
+
+用户在一次反馈里提了五条（原话见对话记录），其中三条是面板交互，两条是「为什么别人遇到我没遇到」
+的根因修复。
+
+### 1. 子项推完了父节点还是橙的
+
+根因不在面板记账，而在**拉取脚本把父分组的 `meta.json` 重写了一一遍**：
+
+- `scaffold/source-api-pull.js` 的 `pullApi(api)` 会顺手 `writeJson(parentPath/meta.json, parentDir)`，
+  哪怕内容一个字没变，`fs.writeFileSync` 也会刷新 mtime。
+- 面板这边（`lib/client.js:1854`）单推/单拉只把**当前单元**记成已推送（`noAncestors: true`），
+  父分组快照里那一截没跟着更新 —— 于是子项全绿、分组橙、`apis` 聚合也橙。
+
+修法是让写入幂等：`writeJson` / `writeText` 写之前先比内容，一样就 `return false` 不落盘。
+`source-page-pull.js` 的 `writeJson` 同样处理，`copyDir` 里的 `filterJson` 结果也改走它。
+
+实测：对 `apis\上传下载` 下的某个 API 跑 `source-api-pull.js`，父分组 `meta.json` 的 mtime
+前后一致；同一条命令再跑第二遍，两个文件的 mtime 全都没变。
+
+### 2. 待推送旁边加推送按钮
+
+`renderPushBadge` 里在徽章之后加 `inlinePush`：`usable === true && pushed !== true &&
+node.aggregate !== true` 时渲染一个「推送」小按钮，`onClick` 里 `event.stopPropagation()` 再
+`startUnit(node, "push", false)`。聚合节点（只有子项、自己没有 uuid 的目录）不给按钮 —— 它没有
+可推的目标，点了只能报错。
+
+### 3. 成功只弹气泡，失败才跳「脚本」页
+
+原来 `startUnit` 无条件 `setView("run")`，等于每次推一个页面都把用户从文件树拽走。
+
+- `startUnit` 去掉 `setView("run")`。
+- `pollRun` 收尾按退出码分流：成功 → `setNotice("✅ 推送完成：「页面名」")`，失败 →
+  `setNotice("❌ …，输出见「脚本」页签")` + `setView("run")`。
+- `notice` 原来是页签上方一行常驻文案，改成 `position: fixed` 的底部气泡（`CSS.toast`），
+  `useEffect` 里 4 秒后自动清空。
+
+### 4. 按服务器分文件夹
+
+见上面「工程目录怎么摆」一节，`<主机-端口>/<uuid>/` + 旧目录自动迁移。
+
+顺带把「在文件树里对某个工程跑脚本时用哪台服务器」修对了：`lib/index.js` 的 `applyConfigToEnv`
+新增第 4 参 `override = { serverUrl, projectUuid }`，只对这一趟生效、不改工作区绑定；
+`projectRunScript` 用 `findProjectSource(root, projectPath)` 从目标目录往上找 `.project-source.json`。
+不这么改的话，在 `A 服务器/<uuid>` 目录里点推送，实际写进 `.env` 的仍是面板当前绑定的那台。
+
+### 5. 隐藏 `.` 开头的文件
+
+`listProjectEntries` 一直有返回 `hidden` 字段（`dirent.name.startsWith(".")`），但客户端没人用。
+`loadLevel` 里把 `entry.hidden === true` 的过滤掉即可。`.env`、`.project-source.json`、
+`.cookies` 都从文件树消失 —— 它们还在磁盘上，只是不进树（「源码」页签里也看不到了，
+需要时用「脚本」或外部编辑器打开）。
+
+铺脚手架时写进工作区根的那十个文件也一样藏掉（`package.json`、`package-lock.json`、
+`source-api-pull.js` 等七个脚本、`utils.js`）—— 用户原话：「铺脚手架的时候这几个文件也不要显示吧」。
+判定放在 host 的 `listProjectEntries`（`SCAFFOLD_ROOT_FILES`）：只有路径正好是**工作区根**
+时才给这些名字标 `hidden`，工程目录里同名的 `utils.js` 是页面自己的代码，照常显示。
+它们不能靠「点开头」那条规则 —— 名字都是正常名字，所以加在同一个 `hidden` 字段上，客户端不用改。
+想看它们：脚本类去「脚本」页签，`package.json` / `package-lock.json` 用外部编辑器。
+探针验过：根上可见只剩 `AGENTS.md` / `help.md` / `project-rules.md` / `node_modules` /
+两个服务器文件夹，进到服务器层一个都不藏。
+
+### 6. 一键整理老目录（「整理」按钮）
+
+用户实测「测试工作区」工作区时，根上同时躺着 `<uuid>/`（28080 的标记）和
+`<uuid>@203.0.113.10-18080/`：脚本的自动迁移一次只认领 `.env` 里那一台，另一台永远挂在根上，
+看起来就像重复的垃圾。用户原话：「这是另一个服务器的文件…不能自动整理吗？」「我不是想跑脚本
+的时候自动整理，而是想加一个一键整理的功能」。
+
+所以做成面板顶栏的「整理」按钮 + host 的 `projectTidyDirs` RPC，**不挂在脚本的 `loadEnv()`
+上**：脚本根本不知道根上那些目录各自属于哪台服务器，而面板能逐个读 `.project-source.json`。
+
+- 归位规则：有标记按标记里的 `serverUrl`；没标记先看面板绑定的服务器、再看工作区 `.env`
+  的 `SERVER_URL`（老工作区没绑定过，但 `.env` 一直在用）；两边都没有就跳过 —— 猜错服务器比不搬更糟。
+- 目标已存在：比两边的目录 `mtime`，新的一方留在 `<主机-端口>/<uuid>/`，旧的一方改名成
+  `<uuid>.旧-<时间戳>` 放在同一个服务器文件夹里。**全程只 `rename`，不删任何文件。**
+- 搬不动（占用 / 没权限）记进 `errors` 继续搬下一个，不整个中断。
+- 备份名和 `@主机-端口` 后缀不匹配整理用的 `LEGACY_PROJECT_DIR_RE`，所以整理完再点一次是空结果，
+  不会把 `.旧-*` 又搬一遍。
+
+验证：临时工作区构造四种情况（无标记无 `.env` → 跳过；`@18080` 后缀 + 标记 → 搬进 18080；
+根上新、目标旧 → 换入并备份旧的；`.旧-*` 备份名 → 不处理），三轮跑完结果与磁盘状态全都符合预期。
+工具复用了 `sameServerUrl` / `readSourceMark` / `readProjectEnv`，时间戳用本地时间（`stampNow()`，
+不用 `toISOString()` —— 那是 UTC，用户在目录名里看到的时间会差 8 小时）。
+
+### 7. 点文件看源码 / 搜索里定位目录 / 气泡挪到右上
+
+用户实测后连着提了三条体验问题，都是「多绕了一步」：
+
+- **点文件默认看源码**：以前树里点文件走 `openFile()` → 官方预览器（HTML / Markdown 被渲染成页面，
+  想看代码还得再点一次行尾的「源码」）。现在树行与搜索命中行的点击都改成
+  `openSnippet()`（`openLocal(entry, "code")` → `openShotTab` 里 `setView("code")`）。
+  唯一保留平台预览的是页面 `index.html`：`pageProjectOf(path, dir) !== ""` 时仍走 `openFile()`
+  —— 本地这份是导出镜像，平台组件渲染不出来，只能去平台自己的 `publish.html`。
+- **搜索命中的目录能定位了**：以前 `revealHit()` 对目录只 `setExpanded()`，可搜索视图和文件树是
+  互斥渲染分支，展开根本看不见，用户点了像没反应。现在目录命中走新的 `openInTree(path)`：
+  清空搜索 → 切回 `tree` → 逐级展开祖先并 `loadLevel()` → `setSelected(path)` →
+  280ms 后按 `[data-path]` 找到那一行 `scrollIntoView({ block: "center" })`。
+  用 DOM 查询而不是 ref，是因为行是每次渲染现拼的，拿不到稳定引用。
+- **气泡挪到右上角**：`CSS.toast` 原来是 `left:50% / bottom:56 / translateX(-50%)`，正好压在会话
+  输入框和脚本日志上；回退色还是 `rgba(32,32,36,.94)` 半透明，浅色主题下文字糊。改成
+  `top:8 / right:12`、`maxWidth:min(520px,62vw)`、实色回退 `#202024`、加边框与更重的阴影、
+  字号 12.5 / 行高 19。`pointerEvents:"none"` 保留，盖住按钮也点得动。
+
+顺带查清用户报的「整理失败：主机侧 RPC projectTidyDirs 失败：HTTP 404」：不是代码问题。
+`lib/client.js` 是每次请求现读磁盘的，所以**旧 host 进程 + 新 client 文件**这个组合下按钮会先出现，
+但 host 的 RPC 表是启动时注册的，点下去就是 404。`Get-NetTCPConnection -LocalPort 3080` 确认
+重启后由新进程监听（启动时间晚于 `lib/index.js` 的 mtime），刷新页面即恢复。
+
+### 8. 临时文件规范（`.ai-tmp/`）
+
+AI 改工程时会在工作区根上留下 `_patch_html.js`、`_probe_*.js`、`_query/` 这类一次性文件，
+和源码混在一起。规范写进 `scaffold/AGENTS.md`（速查）与 `scaffold/project-rules.md`（完整条款）：
+一律放工作区根下的 `.ai-tmp/`，命名带用途和日期，做完就删；**绝不放进 `pages/` / `apis/` /
+`databases/` 这些会被打包推送的目录**。`.ai-tmp/` 以点开头，正好被「隐藏点文件」一起盖住。
+
+### 9. 账本键带上工程目录（同 uuid 的两台服务器不再互相踩）
+
+用户实测：在 `203.0.113.10-18080/1f2e3d4c…/pages/生产管理` 点「推送」/「拉取」，气泡说
+「完成（状态已更新）」，可这行徽章还是「● 待推送」；隔壁 `注塑报工(分摊版)` 同样。
+
+根因不是记账没跑，是**账本键撞了**：页面 uuid 是服务器发的，而同一个工作区里可以躺着
+**同一个工程在两台服务器上的副本**（`<主机-端口>/<uuid>/`，这正是 0.1.6 刚做的目录隔离）。
+两个副本里 `pages/生产管理/page.json` 的 `uuid` 一模一样（实测都是 `9b2e5f7a…`），
+账本键却只有 `工作区|page:<uuid>` —— 于是：
+
+- 在 18080 上推完 → 写进去的是 18080 那份的快照（195 个文件）；
+- 面板扫到 28080 那一份时读同一条记录 → 文件集合、mtime 全对不上 → 永远「待推送」；
+- 反过来推 28080 又踩回 18080。
+
+修法：`pushProjectOf(relPath)` 从相对路径里认出「工程目录」那一段（新结构 `主机-端口/uuid`，
+老结构 `uuid`），账本键变成 `工作区|<工程目录>|page:<uuid>`。`projectPushStatus` 扫描时按每个
+单元自己的 relPath 算，`projectMarkPushed` 按传入的 relDir 算，两边同一个规则。
+
+升级兼容：`computePushStatus` 收一个 `legacyKey` 兜底 —— 新键没有记录时先读旧的
+「不带工程目录」的键，**只读不写回**。不这么兼容的话，升级后所有单元都会因为「新键没记录」
+被登记成已推送，把用户真实的「改了没推」一把抹平。`projectResyncPush` 则新旧两种键一起清
+（它的语义就是「这一片重记」，留着旧键当兜底反而会一直脏）。
+
+验证（探针，构造两个服务器文件夹、同名页面同 uuid）：首次扫描两台都 pushed → 只改 18080
+→ 它 dirty、28080 仍 pushed → 标记 18080 → 两台都 pushed → 只改 28080 → 它 dirty、18080
+仍 pushed。五条全过。
+
+顺带修了一个「点了没反应」的观感问题：行内「推送」按钮点下去只是把脚本拉起来，脚本跑完
+之前界面不会有任何变化（不跳页签、不 loading），用户会以为没点上。现在点击立刻把按钮换成
+「推送中…」并置灰，气泡同时说「⏳ 正在推送「…」…」；`runRunning` 回到 false 时自动摘掉。
+
+### 10. clone 下来一整片「待推送」
+
+用户报：刚克隆下来的工程，`apis` / `pages` 都是橙的。
+
+两个原因叠在一起：
+
+1. **`projectResyncPush` 按 `join(root, project)` 找工程目录** —— 这只在「工程目录就叫 uuid」
+   时成立。新版把工程放在 `<主机-端口>/<uuid>/`，拼出来的路径根本不存在，函数直接
+   `"项目目录不存在，没动账本"` 返回。于是 clone 完成后那一步「清账重记」静默失效，拉下来的
+   文件 mtime 全是新的，一进去整片橙。改成 `findProjectDirs()`：按 uuid 在根下（最多 3 层）
+   找 `<uuid>` / `<uuid>@主机-端口` / `<主机-端口>/<uuid>`，找到几个清几个。
+2. **账本键原来只认「uuid 命名的工程目录」**（`pushProjectOf` 里查 `LEGACY_PROJECT_DIR_RE`）。
+   可工程目录也可能叫项目名，认不出来就退回工作区级键，跟别的副本共用一条记录。
+   现在判据改成「`pages` / `apis` / `databases` 之前的所有目录段」，不看目录叫什么名字。
+   老键（`工作区|page:<uuid>`）只在「那段工程目录确实是 uuid 命名」时当兜底读 ——
+   clone 出来的新目录、两台服务器各自的副本都不会去读别人的账。
+
+验证（探针）：新结构 `<主机-端口>/<uuid>/pages/<页面>`，首次扫描 pushed → 改 mtime → dirty →
+`projectResyncPush(zone:"*", project:uuid)` 返回 `targets:1, dropped:1` → 再扫描全 pushed。
+另一个探针验了「项目名目录」：同一 uuid 两份副本（`测试工作区/示例项目` 与
+`测试工作区/203.0.113.10-18080/<uuid>`），账本里预置老键 → 项目名那份是 pushed（不读老键）、
+uuid 那份是 dirty（保守读老键），两份的键互不相同。

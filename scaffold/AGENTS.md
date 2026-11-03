@@ -9,16 +9,17 @@
 
 ```
 <工作区>/
-├── <projectUuid>/          # 每个 uuid 目录 = 一个低代码工程
-│   ├── apis/               # 每个 API 一个目录：meta.json + script.js
-│   ├── databases/          # 每个数据库一个目录，每张表一个 .json
-│   └── pages/              # 每个页面一个目录：index.html / page.css / page.js / page.json
-├── project-rules.md        # 完整开发规范（详细条款看这里）
-├── help.md                 # source-*.js 同步 / 推送脚本说明
-└── source-*.js             # 拉取、推送脚本
+├── <主机-端口>/             # 按来源服务器分文件夹，http://1.2.3.4:28080 → 1.2.3.4-28080
+│   └── <projectUuid>/       # 每个 uuid 目录 = 一个低代码工程
+│       ├── apis/            # 每个 API 一个目录：meta.json + script.js
+│       ├── databases/       # 每个数据库一个目录，每张表一个 .json
+│       └── pages/           # 每个页面一个目录：index.html / page.css / page.js / page.json
+├── project-rules.md         # 完整开发规范（详细条款看这里）
+├── help.md                  # source-*.js 同步 / 推送脚本说明
+└── source-*.js              # 拉取、推送脚本
 ```
 
-动任何文件之前，先确认它属于哪个 `<projectUuid>/` —— 路径写错就会改到别的工程。
+动任何文件之前，先确认它属于哪个 `<主机-端口>/<projectUuid>/` —— 路径写错就会改到别的工程。
 
 ## 必读规范文件
 
@@ -52,6 +53,14 @@
 
 ### 本地同步与推送
 - 同步 / 推送脚本说明详见 `help.md`
+
+### 临时文件与调试产物
+- 开发过程中产生的**一次性文件**——探测脚本、对比输出、抓包记录、备份、截图、运行日志——**一律放进工作区根下的 `.ai-tmp/`**，不要散在根目录、工程目录或 `pages/` / `apis/` 里面。
+- 命名带上用途和日期：`.ai-tmp/probe-page-tree-20261103.js`、`.ai-tmp/diff-api-out.txt`。同一件事的中间产物放同名子目录。
+- 任务结束就收尾：一次性的**删掉**，需要留档的留在 `.ai-tmp/` 里。不要留在项目内冒充源码，更不要塞进 `<projectUuid>/pages/` 这类会被推送的目录（推上去平台会报错或污染工程）。
+- `.ai-tmp/` 以点开头，面板文件树默认不显示（点开关的文件/目录本来就隐藏），也不参与推送状态比对。
+- 如果这个工作区是 git 仓库，把 `.ai-tmp/` 写进 `.gitignore`。
+- 反面例子（别这么干）：`_patch_html.js`、`_probe_xxx.js`、`_query/`、`.tmp/` 直接躺在工作区根上。
 
 ## 平台侧资源（本地不存在，不要去找）
 
