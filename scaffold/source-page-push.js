@@ -514,6 +514,8 @@ async function main() {
 
         if (isUploadOk(result)) {
             console.log('✓ 上传成功');
+            /* 给面板留个戳：不管是谁跑的（AI、终端、面板），推完就记一行。 */
+            utils.appendPushMark('pages', targetPath);
         } else {
             console.error(`✗ 上传失败: ${(result && result.msg) || JSON.stringify(result)}`);
             process.exit(1);

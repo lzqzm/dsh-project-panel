@@ -2845,3 +2845,45 @@ uuid 那份是 dirty（保守读老键），两份的键互不相同。
   尤其容易被挡），停留 4 秒 → 6 秒，文案前面加 `✅`。
 
 验证：`node --check lib/client.js` 通过；实际渲染等用户刷新页面看。
+
+## 0.1.9：AI / 终端推的也算数（推送戳）
+
+### 12. 别人推的，面板看不见
+
+用户报：「我让 ai 帮忙推送的话这边显示的就还是待推送」。AI 会话（或自己）在终端里跑
+`node source-page-push.js …` 是能推成功的，但面板的账本只在**经由面板发起的运行**结束时
+逐单元刷新，所以那条目录一直停在「待推送」—— 徽章在说假话，越看越不敢信。
+
+试过的几条路：
+
+- 让面板定时去问服务器「这个页面最新版本是什么」—— 平台没有这种比对接口，而且每个单元
+  都问一次，代价太大。
+- 让脚本直接写面板的账本（`~/.dsh/project-push-state.json`）—— 脚本不知道 `DSH_HOME`，
+  而且两个进程同时写同一个 JSON 会互相覆盖。
+- **落到「留个戳」**：脚本推送成功后，往工作区根 `.push-log.jsonl` 追加一行
+  `{ at, zone, dir }`；面板扫描时补账。
+
+判定用时间戳而不是文件清单，正好对上语义：一个单元里**所有文件的 mtime 都不晚于这个戳**，
+说明「现在磁盘上这一版就是推上去的那一版」；之后谁再改文件，mtime 变新，自动又变回待推送。
+戳允许落在父目录上（整片 `pages` 推过一次，就覆盖它下面所有单元）。
+
+实现：
+
+- `scaffold/utils.js` 新增 `appendPushMark(zone, absPath)` + `prunePushLog()`：相对路径用
+  正斜杠（跟账本里 relPath 同一套），工作区外的目录不记（`..` 开头、跨盘符时
+  `path.relative` 会直接给绝对路径，用 `path.isAbsolute` 一并挡掉）；日志只留最近 30 天、
+  最多 5000 行。写失败不影响推送结果。
+- `scaffold/source-page-push.js` / `source-api-push.js` 在「✓ 上传成功」之后各调一次。
+  `source-push.js` 只是串行调度子脚本，子脚本自己会写，不用重复。
+- `lib/index.js` 新增 `readPushLog(root)` / `pushMarkOf(log, rel)`；`projectPushStatus`
+  每个请求读一次日志，在 `computePushStatus` 之前补一笔：
+  `state[key] = { files: current.files, pushedAt: markAt }`，并且只在
+  `markAt > 已记的 pushedAt` 时写，避免每次扫描都把账本刷一遍。
+
+验证（探针 `_tmp_mark_probe.mjs`，临时 `DSH_HOME` + 临时工作区，跑完已删）：首次扫描
+pushed → 改文件 dirty → 写戳（整 `pages`）pushed → 戳之后又改文件 dirty → 只戳单元目录
+也 pushed。5 条全过，账本键形如
+`…\.tmp-ws-mark|203.0.113.10-28080/1f2e3d4c…|page:9b2e5f7a…`。
+
+已同步到三个真实工作区的 `utils.js` / `source-page-push.js` / `source-api-push.js`
+（覆盖前各留了一份 `.scaffold-backup-<时间戳>`）。

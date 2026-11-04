@@ -97,6 +97,52 @@ function writeSource(dir, info) {
 }
 
 /**
+ * 推送成功后在工作区根写一行「推送戳」：`.push-log.jsonl`。
+ *
+ * 为什么需要它：面板的推送账本原来只在「经由面板发起的运行」结束时刷新，
+ * 而 AI 会话 / 手动在终端里跑 `node source-page-push.js …` 也能推送成功 ——
+ * 面板不知道，于是那一片永远停在「待推送」。脚本自己留一行时间戳，面板扫描时
+ * 拿它比对：单元里所有文件的 mtime 都不晚于这个戳，就说明「现在磁盘上的内容
+ * 就是推上去的那一版」，直接算已推送；之后再改文件（mtime 变新）就又变回待推送。
+ *
+ * 只追加一行、几十字节，失败也不影响推送结果；点开头的文件，文件树里本来就隐藏。
+ */
+const PUSH_LOG = '.push-log.jsonl';
+
+function appendPushMark(zone, absPath) {
+    try {
+        if (typeof absPath !== 'string' || absPath === '') return;
+        const rel = path.relative(__dirname, absPath).split(path.sep).join('/');
+        /*
+            工作区外的目录不记：`..` 开头是上级，跨盘符时 path.relative 直接给绝对路径
+            （`C:\Windows\...`），两种都要挡掉，免得写进别人的账。
+        */
+        if (rel === '' || rel === '.' || rel.startsWith('..') || path.isAbsolute(rel)) return;
+        const line = JSON.stringify({ at: Date.now(), zone: String(zone || ''), dir: rel }) + '\n';
+        fs.appendFileSync(path.join(__dirname, PUSH_LOG), line, 'utf-8');
+        prunePushLog();
+    } catch (e) { /* 记账失败不影响推送 */ }
+}
+
+/** 日志只留最近 30 天、最多 5000 行，免得无限增长。 */
+function prunePushLog() {
+    try {
+        const file = path.join(__dirname, PUSH_LOG);
+        const lines = fs.readFileSync(file, 'utf-8').split('\n').filter((item) => item.trim() !== '');
+        const limit = Date.now() - 30 * 24 * 3600 * 1000;
+        const kept = lines.filter((item) => {
+            try {
+                const one = JSON.parse(item);
+                return typeof one.at === 'number' && one.at >= limit;
+            } catch (e) { return false; }
+        });
+        if (kept.length === lines.length && kept.length <= 5000) return;
+        fs.writeFileSync(file, kept.slice(-5000).join('\n') + '\n', 'utf-8');
+    } catch (e) { /* 清理失败无所谓 */ }
+}
+
+
+/**
  * 决定这次的项目目录 —— 每台服务器一个文件夹，下面再按项目 uuid 分。
  *
  * 目录形如 `<工作区>/<主机-端口>/<项目 uuid>/`：
@@ -540,6 +586,7 @@ module.exports = {
     serverKey,
     readSource,
     writeSource,
+    appendPushMark,
     resolveProjectDir,
     resolveLogin,
     login,

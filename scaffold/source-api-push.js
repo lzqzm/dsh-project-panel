@@ -410,6 +410,8 @@ async function main() {
             const result = JSON.parse(uploadResponse);
             if (result.code === 0) {
                 console.log('✓ 上传成功');
+                /* 给面板留个戳：不管是谁跑的（AI、终端、面板），推完就记一行。 */
+                utils.appendPushMark('apis', targetPath);
             } else {
                 console.error(`✗ 上传失败: ${result.msg || uploadResponse}`);
                 process.exit(1);
