@@ -2887,3 +2887,79 @@ pushed → 改文件 dirty → 写戳（整 `pages`）pushed → 戳之后又改
 
 已同步到三个真实工作区的 `utils.js` / `source-page-push.js` / `source-api-push.js`
 （覆盖前各留了一份 `.scaffold-backup-<时间戳>`）。
+
+
+## 0.1.11：卡片区自己选项目 / 配置不再被写丢 / 切换即写 .env（2026-11-05）
+
+起因是四个问题连在一起的。用户先说「点击运行的时候克隆的到底是智家排程还是智家排程app」，
+然后指出「这片区域应该改成全部都要先选项目，然后拉取的是这个指定服务器下的」「项目下拉
+就只是项目管理了相当于」，接着配置文件被清空、最后是「切换服务器后还需要手动点击写入 .env
+太麻烦了」。
+
+### 1. 四张卡片各自挂项目下拉
+
+`RUN_CATALOG` 里「拉取全部 API」「拉取全部页面」补上 `project: true`（原来只有「克隆整个项目」
+「拉取数据库」有），`lib/client.js` 的卡片渲染统一多一行小字「目标项目：」。
+
+难点是脚本参数口径不一致：
+
+- `source-clone.js` / `source-db-pull.js` 是 `process.argv[2] || process.env.PROJECT_UUID`，
+  项目 uuid 可以直接塞 argv[2]；
+- `source-api-pull.js` / `source-page-pull.js` 的 argv[2] 是「`-a` 或单个 id」，
+  塞不下 uuid —— 项目只认 `.env`。
+
+所以带 `-a` 的卡片走 `.env`：`startRun` 里判断 `args.indexOf("-a") >= 0` 就不往 argv 里
+塞项目，改成把 `projectUuid` 传给 host，由 `projectRunScript` 调
+`applyConfigToEnv(root, "", pickedUuid, projectMark)` 落到 `.env`。四张卡片的参数口径就此统一。
+
+服务器下拉 onChange 里顺手 `setRunProject("")`：否则会出现「新服务器地址 + 上一台的项目 uuid」。
+
+### 2. 配置文件被清空 —— 两道保护
+
+事故现场：`~/.dsh/project-config.json` 只剩 267 字节，`servers: []`、`workspaces` 只剩一条
+空绑定（3 个档案 + 4 个工作区绑定全丢），文件 mtime 与那次重启同一分钟。
+
+成因链：旧 `readConfig()` 把「读失败」和「文件本来就不存在」当成同一件事，都返回
+`normalizeConfig(null)`；而 `updateConfig` 是「读 → 改 → 写」，拿着这份空配置整份覆盖。
+于是只要文件里出现半截 JSON（写盘中断、或重启时新旧两个进程撞在一起），下一次任何写操作
+都会把档案清空。
+
+- `writeConfig()` 改原子写：先写 `project-config.json.tmp-<pid>`，再 `rename` 覆盖。
+- `readConfig()` 分两步：`readFile` 与 `JSON.parse` 分开 catch，只有 `ENOENT` 算正常，
+  其它失败记 `configBrokenAt`。
+- `updateConfig()` 在 `mutate` 之后拦一道：`configBrokenAt !== 0 && config.servers.length === 0`
+  时把原文件 `copyFile` 成 `project-config.broken-<时间戳>.json`，抛 `config-unreadable`，
+  **不覆盖**。
+
+验证（探针 `_tmp_guard_probe.mjs`，临时 `DSH_HOME` + 临时工作区，跑完已删）：正常写入 OK →
+把配置文件写成 `{"servers": [` → `projectBindWorkspace` 返回 `config-unreadable`、原文件
+一个字节没动、生成 1 个 broken 备份 → 换成合法空配置后写入恢复正常。
+
+数据恢复：用 `~/.dsh/project-env-backups` 里最新那份 `.env` 的账号密码重建了 3 个档案
+（岱美 / 宏一正式库 / 宏一测试库）与 5 个工作区绑定，坏文件先备份再重写；另外清掉了一条
+只差大小写、永远命不中的重复绑定键。
+
+### 3. 切换服务器 / 项目就直接写 .env
+
+`bindWorkspace(serverId, projectUuid, writeEnv)` 新增第三参，四个调用点（换服务器、换项目、
+删掉当前项目、新增项目后自动绑定）都传 `true`，里面 `await applyConfigRef.current?.()`
+落 `.env`。「写入 .env」按钮保留，用于 `.env` 被手改乱后手动重写。
+
+`applyConfigRef` 这一层是为绕开「`applyConfig` 定义在 `bindWorkspace` 之后」——
+把它的名字写进 `useCallback` 依赖数组会撞上「const 还没初始化」，之前为这个白屏过一次。
+
+成功不再弹气泡（用户：「手动切换项目和点击『写入 .env』按钮的时候不需要这个提示」），
+只剩失败时提示；备份文件照样生成，只是不报路径了。
+
+### 4. 服务器下拉不再混一个「（未选）」
+
+那个 `value=""` 的占位项是用来解绑的，不是档案，混在真档案里会被当成第四台服务器
+（用户原话：「这边只维护了 3 个服务器的配置信息，多出来的这个未选是哪来的」）。
+现在只有「一个档案都没有」或「当前工作区确实没绑服务器」时才渲染它。
+
+### 验证与发布
+
+`node --check lib/client.js`、`lib/index.js` 均通过；改动里对真实服务器地址、工程 uuid、
+客户名、账号做了一遍扫描，0 命中。四张卡片的 `.env` 落盘路径先用探针验过
+（假 `source-api-pull.js` 打印 argv 与 `PROJECT_UUID`，确认 `cmd` 里 argv 一个字没变、
+`.env` 换成了卡片选的项目）。
