@@ -147,6 +147,22 @@ async function main() {
 
     console.log('========================================');
     if (allSuccess) {
+        /*
+            整工程覆盖戳：克隆的含义是「以云端为主，这一整个工程目录整体换了一遍」。
+            三个子脚本各自写了自己那片的整片戳，这里再加一条工程根级别的，把
+            「一次克隆 = 一个整体」记清楚，也兜住将来新增的 zone。
+
+            只有三种都拉、且都成功时才写：PULL_FILE 只配了 page 的话，apis /
+            databases 这次根本没动过，本地可能还留着没推的改动 —— 一条工程根的
+            整片戳会把那两片也记成已推送，等于替用户把真改动抹平。
+        */
+        const pulledAllZones = PULL_SUPPORTED.every((type) => PULL_FILE.includes(type));
+        if (pulledAllZones) {
+            try {
+                const projectDir = utils.resolveProjectDir(PROJECT_UUID, { create: false });
+                if (projectDir) utils.appendSyncScope('*', projectDir);
+            } catch (e) { /* 记账失败不影响拉取结果 */ }
+        }
         console.log('✅ 拉取成功!');
     } else {
         console.log('⚠ 部分拉取失败，请检查上面的错误信息');

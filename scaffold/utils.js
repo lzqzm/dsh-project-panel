@@ -117,7 +117,12 @@ function writeSource(dir, info) {
  */
 const PUSH_LOG = '.push-log.jsonl';
 
-function appendPushMark(zone, absPath) {
+/**
+ * @param {string} zone  pages / apis / databases / "*"
+ * @param {string} absPath 与服务器一致的目录
+ * @param {{ whole?: boolean }} [options] whole=true 记成「整片覆盖戳」（见 appendSyncScope）
+ */
+function appendPushMark(zone, absPath, options) {
     try {
         if (typeof absPath !== 'string' || absPath === '') return;
         const rel = path.relative(__dirname, absPath).split(path.sep).join('/');
@@ -126,14 +131,29 @@ function appendPushMark(zone, absPath) {
             （`C:\Windows\...`），两种都要挡掉，免得写进别人的账。
         */
         if (rel === '' || rel === '.' || rel.startsWith('..') || path.isAbsolute(rel)) return;
-        const line = JSON.stringify({ at: Date.now(), zone: String(zone || ''), dir: rel }) + '\n';
-        fs.appendFileSync(path.join(__dirname, PUSH_LOG), line, 'utf-8');
+        const mark = { at: Date.now(), zone: String(zone || ''), dir: rel };
+        if (options !== undefined && options !== null && options.whole === true) mark.whole = true;
+        fs.appendFileSync(path.join(__dirname, PUSH_LOG), JSON.stringify(mark) + '\n', 'utf-8');
         prunePushLog();
     } catch (e) { /* 记账失败不影响脚本结果 */ }
 }
 
 /** 语义更直白的别名：拉取 / 克隆成功时也用它，含义是「这个目录与服务器一致了」。 */
 const appendSyncMark = appendPushMark;
+
+/**
+ * 整片同步戳：克隆 / 拉取全部跑完后，指向工程根（或某个 zone 根）。
+ *
+ * 和逐单元戳的区别只在**含义**：逐单元戳说「这个单元和服务端一致」，整片戳说
+ * 「这一整片刚被云端整体盖过一次」。区别为什么重要：克隆是「以云端为主」，
+ * 本地原来改过的页面、接口会被整片换掉 —— 那些单元在账本里记着一个更早的
+ * mtime，逐单元自愈怕误伤真改动（只补「新增」不补「改过」），于是一片橙。
+ * 面板见到整片戳就把范围内每个单元按当前快照整片重记，不再分新增 / 改过；
+ * 之后再动的文件（mtime 晚于戳）照旧变回待推送。
+ */
+function appendSyncScope(zone, absDir) {
+    appendPushMark(zone, absDir, { whole: true });
+}
 
 /**
  * 日志只留最近 30 天、最多 20000 行，免得无限增长。
@@ -604,6 +624,7 @@ module.exports = {
     writeSource,
     appendPushMark,
     appendSyncMark,
+    appendSyncScope,
     resolveProjectDir,
     resolveLogin,
     login,

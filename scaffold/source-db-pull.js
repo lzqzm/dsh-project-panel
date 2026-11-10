@@ -348,9 +348,13 @@ async function main() {
             fs.unlinkSync(zipPath);
         }
 
-        // 整片 databases 刚从服务端重建：留一条同步戳（面板按库目录记账）
+        /*
+            整片覆盖戳：databases 每次都是整片删掉按服务端重建，走到这里这一片
+            已经是线上那一版了。面板据此整片重记成已推送 —— 不再按文件区分
+            「新增 / 改过」。
+        */
         if (fs.existsSync(DATABASES_DIR)) {
-            utils.appendSyncMark('databases', DATABASES_DIR);
+            utils.appendSyncScope('databases', DATABASES_DIR);
         }
 
         console.log('');

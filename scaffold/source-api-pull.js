@@ -528,6 +528,15 @@ async function main() {
             }
         }
 
+        /*
+            整片覆盖戳：只在「拉全部」时记 —— 这一片整体被线上版本换了一遍。
+            面板据此把 apis 这一片整片重记成已推送，不再按文件区分「新增 / 改过」。
+            单个 API / 目录的拉取由 pullApi / pullDirectory 自己逐单元写戳。
+        */
+        if (pullAll) {
+            utils.appendSyncScope('apis', apisDir);
+        }
+
         console.log('');
         console.log('========================================');
         console.log('✅ 拉取成功!');

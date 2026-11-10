@@ -527,6 +527,14 @@ async function main() {
                 await pullNode(rootNode);
             }
 
+            /*
+                整片覆盖戳：这一遍把所有页面/目录都换成了线上版本。面板见到它就
+                把 pages 这一片整片重记成已推送 —— 不再按文件区分「新增 / 改过」
+                （克隆以云端为主，本地那点改动已经被覆盖掉了）。之后真改过的文件
+                mtime 晚于这条戳，照旧变回待推送。
+            */
+            utils.appendSyncScope('pages', pagesDir);
+
         } else {
             // 步骤 3: 确定目标
             const targetInfo = determineTarget();
