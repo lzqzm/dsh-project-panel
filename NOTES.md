@@ -1465,7 +1465,7 @@ server、选完再回头指责他选错了，纯属自找麻烦。于是整条�
 ```
 <DSH_HOME>/project-config.json
 {
-  "servers":    [ { "id": "srv-…", "label": "智家排程", "serverUrl": "http://…",
+  "servers":    [ { "id": "srv-…", "label": "示例工程", "serverUrl": "http://…",
                     "username": "…", "password": "…", "env": "local" } ],
   "workspaces": { "<归一化后的绝对路径>": { "serverId": "srv-…", "projectUuid": "…" } }
 }
@@ -1577,7 +1577,7 @@ const parsed = await readProjectEnv(root);
 `<DSH_HOME>/project-config.json` 里每个 server 多一个字段：
 
 ```json
-"projects": [ { "uuid": "…", "name": "智家排程" } ]
+"projects": [ { "uuid": "…", "name": "示例工程" } ]
 ```
 
 **为什么非要有它**：候选项目原先只从 `.env` 的注释里捡 —— 而**新铺出来的 `.env`
@@ -2145,7 +2145,7 @@ host 半边，**要重启 dsh web**。
 
 | 行 | 项目目录（根那层 uuid） | 其他目录 / 文件 |
 | --- | --- | --- |
-| 右键菜单 | 「修改备注（当前：智家排程）」 | 「重命名」 |
+| 右键菜单 | 「修改备注（当前：示例工程）」 | 「重命名」 |
 | F2 | 进备注编辑 | 进改名编辑 |
 | 输入框 placeholder | `项目备注（留空 = 显示 uuid）` | `文件夹名` / `文件名` |
 
@@ -2642,7 +2642,7 @@ ADMIN_USERNAME && ADMIN_PASSWORD 都在且非空
   老 `<uuid>/` 无标记时迁移、老目录标记属于别的服务器时不迁移且另建、上一版 `@` 后缀目录
   同服务器时迁移、`create: false` 不建目录、同服务器第二个工程共用服务器文件夹、`serverKey`
   四种输入。
-- 实跑：`D:\project\PythonWorkSpace\AI\magicalcoder_ai\localdev` 里拉一个页面，老目录
+- 实跑：`D:\project\PythonWorkSpace\AI\本地工作区` 里拉一个页面，老目录
   `5c6b7a8d…/` 消失、新目录 `203.0.113.10-18080\5c6b7a8d…\` 出现，`.project-source.json` 内容正确。
 - 探针都在临时目录里跑（复制一份 `utils.js` 过去、`NODE_PATH` 指插件根），跑完删掉。
 
@@ -2891,7 +2891,7 @@ pushed → 改文件 dirty → 写戳（整 `pages`）pushed → 戳之后又改
 
 ## 0.1.11：卡片区自己选项目 / 配置不再被写丢 / 切换即写 .env（2026-11-05）
 
-起因是四个问题连在一起的。用户先说「点击运行的时候克隆的到底是智家排程还是智家排程app」，
+起因是四个问题连在一起的。用户先说「点击运行的时候克隆的到底是示例工程还是某工程」，
 然后指出「这片区域应该改成全部都要先选项目，然后拉取的是这个指定服务器下的」「项目下拉
 就只是项目管理了相当于」，接着配置文件被清空、最后是「切换服务器后还需要手动点击写入 .env
 太麻烦了」。
@@ -2936,7 +2936,7 @@ pushed → 改文件 dirty → 写戳（整 `pages`）pushed → 戳之后又改
 一个字节没动、生成 1 个 broken 备份 → 换成合法空配置后写入恢复正常。
 
 数据恢复：用 `~/.dsh/project-env-backups` 里最新那份 `.env` 的账号密码重建了 3 个档案
-（岱美 / 宏一正式库 / 宏一测试库）与 5 个工作区绑定，坏文件先备份再重写；另外清掉了一条
+（某客户 / 正式服务器 / 测试服务器）与 5 个工作区绑定，坏文件先备份再重写；另外清掉了一条
 只差大小写、永远命不中的重复绑定键。
 
 ### 3. 切换服务器 / 项目就直接写 .env
@@ -2963,3 +2963,60 @@ pushed → 改文件 dirty → 写戳（整 `pages`）pushed → 戳之后又改
 客户名、账号做了一遍扫描，0 命中。四张卡片的 `.env` 落盘路径先用探针验过
 （假 `source-api-pull.js` 打印 argv 与 `PROJECT_UUID`，确认 `cmd` 里 argv 一个字没变、
 `.env` 换成了卡片选的项目）。
+
+## 0.1.12：拉取/克隆也留同步戳 / 同一个 uuid 的两个目录不再互相踩（2026-11-10）
+
+用户原话：「某工程模块我刚刚从云端拷贝下来的，应该显示的都是已推送才对的啊」。
+现象是整片橙，展开却发现每个子页面各自都是「已推送」，只有父目录（`任务清单`、`质检管理`）
+和它们上面的 `pages` 聚合橙着。
+
+### 1. 戳的含义从「推送过」改成「这一刻和服务端一致」
+
+0.1.9 只在推送后写 `.push-log.jsonl`。可拉取/克隆更冤：它把本地换成服务端那一版，
+**所有文件 mtime 都变成新的**，账本里还留着上次推送的旧 mtime → 面板一律判「改过没推」。
+拉取从来没有「我知道它现在是干净的了」这条信息。
+
+于是：
+
+- `scaffold/utils.js` 里 `appendPushMark` 的注释重写，另导出语义化别名 `appendSyncMark`；
+  文件名 `prunePushLog` 的上限 5000 → 20000 行（一次「拉取全部 API」就一千多行）。
+- `source-page-pull.js`（拉单页 + 拉一批）、`source-api-pull.js`（单 API、分组目录、
+  递归子分组）、`source-db-pull.js`（整片重建后一条戳）都补上 `appendSyncMark`。
+- `source-clone.js` 不用动：它是串行调上面几个脚本，戳由子脚本落。
+
+### 2. 补账时把祖先的「切片」也对齐
+
+`snapshotDir` 是递归的：子页面的文件一换，父目录那一份快照就对不上。原来只有
+`projectMarkPushed` 会向上刷祖先，而「脚本自己推/拉完、面板补账」这条路不刷 —— 于是
+子页面绿、父目录永远橙。
+
+抽了个模块级的 `alignAncestors(state, root, rel, selfFiles, stamp)`：从 `rel` 往上逐层找祖先，
+把它快照里 `子目录/` 开头的那一截删掉、用当前子单元的 `selfFiles` 拼回去，`pushedAt` 取
+`Math.max(旧, 新)`。`projectMarkPushed` 与 `projectPushStatus` 的补账分支都调它。
+
+坑：第一版把它插进了 `HANDLERS` 对象字面量里 → `SyntaxError: Unexpected identifier`；
+第二版传的是 `scanZone` 闭包里的 `pushKeyPrefix(resolved)`（**不带工程目录段**），
+祖先的 key 因此算错、写进一条不存在的键上，探针里父目录照旧 dirty。改成每个祖先
+自己 `pushScopePrefix(root, ancestorRel)` 才对 —— 账本键里的工程目录段是按「那个单元
+自己」的路径推出来的，不能拿子单元的前缀套上去。
+
+### 3. 两个目录同一个 uuid → 不再互相踩
+
+`任务清单/注塑报工-员工-废弃` 与 `任务清单/注塑报工-员工复制` 的 `page.json` 里 `uuid`
+一模一样（`9b2e5f7a…`，名字不同）。两个目录共用一个账本键，谁后写谁赢，另一个必然
+「待推送」，父目录再被这条拖橙 —— 无论推哪个、标记哪个都没用。
+
+扫描时用 `unitSeen` 记下这轮见过的单元键：第二次遇到同一个键的目录，产出一个
+`duplicate: true` 的节点 —— 不记账、不参与聚合、徽章显示「⚠ 重复 uuid」（悬停提示
+「只能留一个，删掉多余那个目录」）。重复节点当作 `pushed`，父目录就不会被它拖累。
+
+### 验证
+
+- 临时工作区探针（父页面快照里子切片写成 5 天前、再写一条指向子页面的戳）：
+  写戳前父 `dirty` → 写戳后父 `pushed`，父快照里的子切片全部换成新值。
+- 真实账本（复制 `project-config.json` + `project-push-state.json` 到临时 `DSH_HOME`）：
+  给 `注塑报工-员工-废弃` 补一条戳 → `任务清单` 立刻变绿，`注塑报工-员工复制` 显示
+  「⚠ 重复 uuid」；再给刚克隆的那个工程整片写戳 → 1062 个节点里未推送 0，`pages` 聚合绿。
+- 三个真实工作区
+  的 `utils.js` / 三条拉取脚本已同步，各自留了 `.scaffold-backup-*` 备份；
+  9 个文件 `node --check` 全过。

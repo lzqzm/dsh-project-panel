@@ -340,6 +340,9 @@ async function pullDirectory(dir, allDirIds) {
         }
 
         console.log(`  调试:   写入 API ${api.name}`);
+
+        // 拉下来的这版就是服务端那版：留同步戳，面板扫描时直接算「已同步」
+        utils.appendSyncMark('apis', apiPath);
     }
 
     // 递归处理子目录
@@ -349,6 +352,9 @@ async function pullDirectory(dir, allDirIds) {
             await pullDirectory(childDir, allDirIds);
         }
     }
+
+    // 分组目录自己也带 meta.json（面板按它记账），同样留一条
+    utils.appendSyncMark('apis', dirPath);
 }
 
 // 递归确保祖先目录存在并写入 meta.json
@@ -410,6 +416,9 @@ async function pullApi(api) {
     if (api.script) {
         writeText(path.join(apiPath, 'script.js'), api.script);
     }
+
+    // 单个 API 也是「与服务端一致」，留同步戳
+    utils.appendSyncMark('apis', apiPath);
 }
 
 async function main() {

@@ -272,6 +272,9 @@ async function pullNode(node) {
 
                 console.log(`✓ 已拉取页面: ${ancestorPath.length > 0 ? ancestorPath.map(n => n.name).join('/') + '/' : ''}${node.name}`);
 
+                // 拉下来的这版就是服务端那版：留一条同步戳，面板扫描时直接算「已同步」
+                utils.appendSyncMark('pages', pageDestPath);
+
                 // 清理临时目录
                 await deleteDirectoryRecursive(tempExtractDir);
                 fs.unlinkSync(zipPath);
@@ -621,6 +624,9 @@ async function main() {
                 });
 
                 console.log(`✓ 已覆盖页面: ${ancestorPath.length > 0 ? ancestorPath.map(n => n.name).join('/') + '/' : ''}${pageName}`);
+
+                // 覆盖的这版就是服务端那版：留一条同步戳
+                utils.appendSyncMark('pages', pageDestPath);
             }
 
             // 清理临时目录

@@ -348,6 +348,11 @@ async function main() {
             fs.unlinkSync(zipPath);
         }
 
+        // 整片 databases 刚从服务端重建：留一条同步戳（面板按库目录记账）
+        if (fs.existsSync(DATABASES_DIR)) {
+            utils.appendSyncMark('databases', DATABASES_DIR);
+        }
+
         console.log('');
         console.log('========================================');
         console.log('✅ 拉取成功!');

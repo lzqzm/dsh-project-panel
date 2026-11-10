@@ -97,15 +97,23 @@ function writeSource(dir, info) {
 }
 
 /**
- * 推送成功后在工作区根写一行「推送戳」：`.push-log.jsonl`。
+ * 推送 **或拉取** 成功后，在工作区根写一行「同步戳」：`.push-log.jsonl`。
+ *
+ * 一句话：**这个目录此刻的内容，和服务端是一致的。**
  *
  * 为什么需要它：面板的推送账本原来只在「经由面板发起的运行」结束时刷新，
  * 而 AI 会话 / 手动在终端里跑 `node source-page-push.js …` 也能推送成功 ——
- * 面板不知道，于是那一片永远停在「待推送」。脚本自己留一行时间戳，面板扫描时
- * 拿它比对：单元里所有文件的 mtime 都不晚于这个戳，就说明「现在磁盘上的内容
- * 就是推上去的那一版」，直接算已推送；之后再改文件（mtime 变新）就又变回待推送。
+ * 面板不知道，于是那一片永远停在「待推送」。
  *
- * 只追加一行、几十字节，失败也不影响推送结果；点开头的文件，文件树里本来就隐藏。
+ * 拉取这边是同一个坑，而且更冤：克隆 / 拉取下来的文件 mtime 全是新的，如果账本里
+ * 还留着这个单元更早的记录（同一台机器上以前推过，或者另一份副本记过），面板就会
+ * 判成「本地改过、还没推」—— 明明刚跟服务端同步过，却一片橙。
+ *
+ * 脚本自己留一行时间戳，面板扫描时拿它比对：单元里所有文件的 mtime 都不晚于这个
+ * 戳，就说明「现在磁盘上的内容就是服务端那一版」，直接算已同步；之后再改文件
+ * （mtime 变新）就又变回待推送。
+ *
+ * 只追加一行、几十字节，失败也不影响脚本结果；点开头的文件，文件树里本来就隐藏。
  */
 const PUSH_LOG = '.push-log.jsonl';
 
@@ -121,10 +129,18 @@ function appendPushMark(zone, absPath) {
         const line = JSON.stringify({ at: Date.now(), zone: String(zone || ''), dir: rel }) + '\n';
         fs.appendFileSync(path.join(__dirname, PUSH_LOG), line, 'utf-8');
         prunePushLog();
-    } catch (e) { /* 记账失败不影响推送 */ }
+    } catch (e) { /* 记账失败不影响脚本结果 */ }
 }
 
-/** 日志只留最近 30 天、最多 5000 行，免得无限增长。 */
+/** 语义更直白的别名：拉取 / 克隆成功时也用它，含义是「这个目录与服务器一致了」。 */
+const appendSyncMark = appendPushMark;
+
+/**
+ * 日志只留最近 30 天、最多 20000 行，免得无限增长。
+ *
+ * 上限不能太小：一次「拉取全部 API」就是一千多行（每个 API 一行戳），太小的话
+ * 拉两次就把前面的戳挤掉了，那些单元的记账又得靠面板自己重扫。
+ */
 function prunePushLog() {
     try {
         const file = path.join(__dirname, PUSH_LOG);
@@ -136,8 +152,8 @@ function prunePushLog() {
                 return typeof one.at === 'number' && one.at >= limit;
             } catch (e) { return false; }
         });
-        if (kept.length === lines.length && kept.length <= 5000) return;
-        fs.writeFileSync(file, kept.slice(-5000).join('\n') + '\n', 'utf-8');
+        if (kept.length === lines.length && kept.length <= 20000) return;
+        fs.writeFileSync(file, kept.slice(-20000).join('\n') + '\n', 'utf-8');
     } catch (e) { /* 清理失败无所谓 */ }
 }
 
@@ -587,6 +603,7 @@ module.exports = {
     readSource,
     writeSource,
     appendPushMark,
+    appendSyncMark,
     resolveProjectDir,
     resolveLogin,
     login,
