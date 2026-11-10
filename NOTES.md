@@ -3020,3 +3020,69 @@ pushed → 改文件 dirty → 写戳（整 `pages`）pushed → 戳之后又改
 - 三个真实工作区
   的 `utils.js` / 三条拉取脚本已同步，各自留了 `.scaffold-backup-*` 备份；
   9 个文件 `node --check` 全过。
+
+## 0.1.13：克隆按云端整片重记账本 / 删目录顺手清账（2026-11-10）
+
+用户原话：「还是不行，刚克隆下来的智家排程模块显示的还是待推送」。0.1.12 那套补账
+是**按文件猜**：拿 mtime 和戳比、再给 5 秒余量兜住「目录先记账、文件后落盘」的时差。
+可克隆的语义不是「我猜你改没改」，而是「本地就是云端那一版」—— 猜得再准，克隆之后
+本地被覆盖的文件 mtime 全会变，逐文件比就可能漏，一漏就整片橙。
+
+### 1. 整片戳：`whole: true`
+
+戳从「某次推送的时刻」扩展成两种语义，用字段区分，老数据不用迁移：
+
+- `appendPushMark(zone, absPath, options)` 多了第三参，`options.whole === true` 时多写一个
+  `whole: true`；新增语义化入口 `appendSyncScope(zone, absDir)`，就是「这一片现在与云端
+  完全一致」。
+- 写方：`source-page-pull.js`（`-a` 拉完全部页面后）、`source-api-pull.js`（`-a` 拉完全部
+  API 后）各写一条 zone 级整片戳；`source-db-pull.js` 本来就是整片删除重建，把原来那条
+  `appendSyncMark` 换成 `appendSyncScope`；`source-clone.js` 在三种都拉成功时写一条工程根
+  整片戳（`pulledAllZones`）。
+- host：`readPushLog` 保留 `whole` 字段；新增 `pushScopeMarkOf(log, rel)`，与 `pushMarkOf`
+  同构但**只认整片戳**；`scanZone` 里同时取 `markAt` 与 `scopeMark`。
+
+判定顺序是「整片优先」：
+
+```
+byScope = scopeMark !== null && newest <= scopeMark
+byScope 命中 → 整片重记（same !== true || recorded < scopeMark 才写）
+否则      → 落回 0.1.12 的 byMark / byHeal 那套逐文件兜底
+```
+
+命中 `byScope` 时直接 `state[key] = { files: current.files, pushedAt: Math.max(recorded, scopeMark) }`
+再 `alignAncestors(...)`，**不看 missing / changed** —— 这就是「以云端为主」。之后本地再改，
+新文件的 mtime 会晚于这条戳，照旧显示待推送。
+
+### 2. 删目录时把账一起清掉
+
+用户原话：「删掉文件夹后账本也清掉」。原来面板删目录只动磁盘，账本里那几条 `page:<uuid>` /
+`api:<id>` 还留着：下次克隆回来，键是老的、文件是新的 → 判「改过没推」，正是这次要修的现象。
+
+新增 `async function forgetPushUnder(root, dir)`，在 `projectDeleteEntry` 里 `rm` **之前**调用
+（键要靠 `page.json` / `meta.json` 算出来，目录一删就查不到 id 了）：
+
+- 每层目录 `pushKeyOf(abs, pushScopePrefix(base, relPath))` 命中就 `delete state[key.key]`，
+  老结构（uuid 命名的工程目录）顺带删 `pushKeyPrefix(base) + scope + ":" + target`；
+- 祖先目录的**切片**也要摘：从 `record.files` 里删掉 `文件名 === name` 或 `文件名.startsWith(name + "/")`
+  的项，否则父分组会拿着「已经不在盘上的文件」去比，永远橙着；
+- 跳过 `.` 开头的临时件与 `PUSH_SKIP_DIRS`；只有真的删掉了东西才 `writePushState`。
+
+单个文件删除**不动账本** —— 文件少了本来就该显示待推送，那是要推的改动。
+
+### 验证
+
+- 整片戳探针 6 个场景全绿：首扫全绿 → 改本地文件变待推送 → 写整片戳回绿 → 克隆后又改
+  （mtime 推到戳之后）变待推送 → 再写戳回绿 → 工程根整片戳同样生效。
+- 删账探针 5 个场景全绿：首扫 3 个单元全绿、给页面写的 `page:p1` 键删后消失、按云端重建
+  后直接绿、删分组子目录后分组仍绿；对照组（绕开面板直接 `rm`、不清账再重建）稳定复现
+  「待推送」—— 正是用户遇到的那条路。
+- 真实工作区回归（宏一测试库，副本账本）：5392 个节点、待推送 0。
+- 三个真实工作区的 `utils.js` + 四条脚本已同步（备份 `.scaffold-backup-20261110-115852`），
+  5 个文件 `node --check` 全过。
+
+### 生效方式（本地 link 安装）
+
+`lib/index.js` 是宿主模块，改完**必须重启 `dsh web`**；`lib/client.js` 由 DSH 的 `client-hmr`
+每 500ms 比对 mtime/ctime/size 后重读并广播，刷新或等几秒即可；`scaffold/*.js` 是工作区里的
+普通脚本，直接生效。
