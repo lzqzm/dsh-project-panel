@@ -3138,3 +3138,74 @@ byScope 命中 → 整片重记（same !== true || recorded < scopeMark 才写�
 ### 生效方式
 
 `lib/index.js` 与 `lib/client.js` 都改了：**重启 `dsh web`** 后刷新面板，3 秒左右扫完。
+
+## 0.1.15：点目录一直「读取中」—— 首屏扫描把什么都挡住了（2026-11-20）
+
+用户报（原话）：「这里为什么等了十几秒了还是加载中啊，这是在加载什么东西啊这样子太影响使用了啊」，
+并补了一句「页面刷新后现在点击又是马上就有数据了」—— 这句把方向钉死了：不是接口慢，是**首屏那一次
+扫描正在跑**。
+
+现场：面板一进来就 `useEffect([dir, loadPushStatus])` → `loadPushStatus(dir)`，而这一次扫描在真机上
+是 **6326ms、5540 个节点、3.00MB 响应**。用户第一下点目录就落在这个窗口里，那一行只好一直挂着
+「读取中…」。另外 `.push-log.jsonl` 已经涨到 **20000 行**（`prunePushLog` 的上限），每次扫描都要
+整份解析一遍。
+
+### 1. 徽章晚 1.5 秒，树先出来
+
+换工作区那个 `useEffect` 末尾不再直接 `void loadPushStatus(dir)`，改成 `setTimeout(…, 1500)`，
+并把 `clearTimeout` 作为 cleanup 返回（切走就取消，旧目录的扫描本来也没意义）。
+
+### 2. 扫描时明确说一声
+
+新增 `renderPushScanHint()`：`pushBusy === true` 时在树上头挂一条
+「正在后台扫描推送状态（大工程要几秒），期间可以正常展开目录、看源码」。
+原来这时候界面一声不吭，用户没法区分「在忙」和「卡死」。
+
+### 3. 日志只解析尾部
+
+`readPushLog` 只读最后 `PUSH_LOG_TAIL_LINES = 4000` 行。补账只关心最近的戳（`prunePushLog`
+保留 30 天），更早的对「今天该不该亮」没有意义。拿 200000 行（全量）跑同一份工作区对比过，
+待推送结果一模一样。
+
+### 4. 响应体瘦身
+
+节点不再返回 `key`（`<前缀>:page:<uuid>` 那种，里面含完整绝对路径），面板侧本来也是用 `dir`；
+去重从 `key + "|" + relPath` 改成直接按 `relPath`（同一个 relPath 不可能既是 broken 又是单元）。
+响应 3.00MB → **2.59MB**，扫描 6326ms → **1463–2292ms**。
+
+### 5. 校验数字改成「后补」
+
+原来状态和校验挤在一次请求里：`lintCached` 走完全部单元才有响应。现在：
+
+```
+projectPushStatus(path, lint=false) → 节点 + 待补校验的 relPath 列表，状态先到
+projectPushLint(path, rels)         → 每批最多 800 个单元的 errors/warns
+```
+
+面板每批 300 个送（`refinePushLint` 里循环），每批回来 `mergeLintInto` 就地合并，聚合节点
+（`apis` / `pages` 那层）的 `errors/warns/lintedUnits/totalUnits` 沿 `relPath` 逐级往上累加重算。
+徽章先出来、X16 稍后到。
+
+### 顺带：全局规范「移除」不再报「对不上」
+
+面板提示「模板已更新，可以移除再安装」，但 `projectRemoveGlobalRules` 只删与模板**逐字节相同**
+的那份 —— 老安装（2933 字节）永远撞 `reason:"modified"`，用户照提示点必然失败。
+
+现在支持 `force`：对不上时先把现有文件备份成 `AGENTS.md.bak-<时间戳>` 再删，返回 `backup` 路径；
+面板侧用 `window.confirm` 问一次（文案里带上备份路径），确认后才带 `force`。
+
+### 验证
+
+- 分段一致性：状态段（`lint:false`）+ 分批补校验，合并后与一次跑完（`lint:true`）逐节点比对
+  5540 个节点，`errors/warns/linted` **完全一致**。
+- 回归探针（整片戳 + 删目录清账）：首扫全绿 → 改文件变待推送 → `pages` 整片戳回绿 → 戳后再改变
+  待推送 → 工程根整片戳回绿 → 删目录后账本 `page:p1` 消失 → 重建后直接绿，7 项全过。
+- 坏单元 / 重复 uuid 探针：broken 节点 `pushable=false`、重复的那个标 `duplicate` 且不参与聚合，
+  补校验对坏单元返回 `json-invalid`。
+- `projectPushLint` 一次送 1000 个单元会被拒（`too-many`，上限 800）。
+- `node --check` 两个文件均通过。
+
+### 生效方式
+
+`lib/index.js` 改了 host 侧逻辑：**重启 `dsh web`**；`lib/client.js` 刷新即可（HMR 每 500ms 轮询）。
+
