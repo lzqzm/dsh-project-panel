@@ -288,23 +288,27 @@ function resolveProjectDir(projectUuid, options) {
 const PLATFORM_LOGIN_PROJECT = 'beddb82e95d14952b7a80c014c4c19c7';
 
 /**
- * 决定这次用哪套登录。
+ * 这次登录要试哪几套，按优先顺序排。
  *
  * 平台有两套登录接口：
- * - `server/web/login`：设计器登录，body `{userName, password}`。
  * - `manager/web/login`：后台管理登录，body `{tenantName, username, password, projectUuid}`。
+ * - `server/web/login`：设计器登录，body `{userName, password}`。
  *
- * **业务接口（openapi / crud）只认后台那套的会话** —— 带设计器会话去调会得到
- * `{"flag":false,"code":-20,"desc":"请重新登录"}`，看起来像「没登录」，其实是会话不认。
+ * 后台管理登录排前面（多数业务接口认它的会话），业务账号登录兜底。
  *
- * `.env` 里有 `ADMIN_USERNAME` + `ADMIN_PASSWORD` 就走后台登录，否则退回设计器登录
- * （老工作区没有这两个键时行为完全不变）。
+ * 兜底是实测逼出来的：`.env` 里只要有 ADMIN_USERNAME / ADMIN_PASSWORD，脚本就会
+ * 拿它去登录；这对后台凭据一旦填错（或那台服务器上根本没有这个后台账号），
+ * 所有脚本一上来就稳定得到 `{"flag":false,"code":-1,"desc":"用户名或密码错误"}` ——
+ * 看起来像「业务账号密码错了」，其实业务账号那条路完全是通的。
+ * 实测同一台服务器：业务账号登录返回 `code:0`，拿这个会话调 `local-export`
+ * 也能正常下到 zip，所以后台登录失败时必须能接着试业务账号。
  */
-function resolveLogin(serverUrl) {
+function loginCandidates(serverUrl) {
+    const list = [];
     const adminUser = process.env.ADMIN_USERNAME || '';
     const adminPwd = process.env.ADMIN_PASSWORD || '';
     if (adminUser !== '' && adminPwd !== '') {
-        return {
+        list.push({
             mode: 'manager',
             url: `${serverUrl}/youyaboot-admin/magical_lowcode/manager/web/login`,
             body: {
@@ -313,39 +317,59 @@ function resolveLogin(serverUrl) {
                 password: adminPwd,
                 projectUuid: process.env.ADMIN_LOGIN_PID || PLATFORM_LOGIN_PROJECT
             }
-        };
+        });
     }
-    return {
+    list.push({
         mode: 'server',
         url: `${serverUrl}/youyaboot-admin/magical_lowcode/server/web/login`,
         body: { userName: process.env.USERNAME || '', password: process.env.PASSWORD || '' }
-    };
+    });
+    return list;
+}
+
+/**
+ * 首选那套登录。只想要一个地址的调用点用它；要能自动兜底请用 loginCandidates。
+ */
+function resolveLogin(serverUrl) {
+    return loginCandidates(serverUrl)[0];
+}
+
+/** 登录响应算不算成功 —— 两套接口的字段名不一样（code / flag）。 */
+function isLoginOk(data) {
+    return data !== null && typeof data === 'object'
+        && (data.code === 0 || data.code === 200 || data.flag === true);
 }
 
 /**
  * 登录并获取 Cookie 文件路径
  *
- * 形参 `username` / `password` 保留是为了不动所有调用点，实际取值由 `resolveLogin()`
+ * 形参 `username` / `password` 保留是为了不动所有调用点，实际取值由 `loginCandidates()`
  * 从 `process.env` 决定（`loadEnv()` 已经把 `.env` 灌进去了）。
+ *
+ * 后台管理登录失败会接着试业务账号登录（见 loginCandidates 的注释）。
  */
 function login(serverUrl, username, password, projectDir) {
     const cookiesFile = path.join(projectDir, '.cookies');
-    const cfg = resolveLogin(serverUrl);
+    const candidates = loginCandidates(serverUrl);
+    let lastError = '';
 
-    try {
-        // 密码不拼进命令行，body 从 stdin 递进去：既躲开 Windows cmd.exe 的引号转义地狱，
-        // 也不让密码出现在进程列表里。
-        const cmd = `curl -s -c "${cookiesFile}" -X POST "${cfg.url}" -H "Content-Type: application/json" --data-binary @-`;
-        const response = execSync(cmd, { encoding: 'utf-8', input: JSON.stringify(cfg.body) });
+    for (const cfg of candidates) {
+        try {
+            // 密码不拼进命令行，body 从 stdin 递进去：既躲开 Windows cmd.exe 的引号转义地狱，
+            // 也不让密码出现在进程列表里。
+            const cmd = `curl -s -c "${cookiesFile}" -X POST "${cfg.url}" -H "Content-Type: application/json" --data-binary @-`;
+            const response = execSync(cmd, { encoding: 'utf-8', input: JSON.stringify(cfg.body) });
 
-        if (response.includes('"code":0')) {
-            return cookiesFile;
-        } else {
-            throw new Error(`登录失败: ${response}`);
+            if (response.includes('"code":0')) {
+                return cookiesFile;
+            }
+            lastError = `登录失败: ${response}`;
+        } catch (error) {
+            lastError = `登录失败: ${error.message}`;
         }
-    } catch (error) {
-        throw new Error(`登录失败: ${error.message}`);
     }
+
+    throw new Error(lastError === '' ? '登录失败: 没有可用的登录方式' : lastError);
 }
 
 /**
@@ -626,7 +650,9 @@ module.exports = {
     appendSyncMark,
     appendSyncScope,
     resolveProjectDir,
+    loginCandidates,
     resolveLogin,
+    isLoginOk,
     login,
     ensureLogin,
     scanMetaFiles,

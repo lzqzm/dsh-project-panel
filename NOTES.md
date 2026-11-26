@@ -3209,3 +3209,80 @@ projectPushLint(path, rels)         → 每批最多 800 个单元的 errors/war
 
 `lib/index.js` 改了 host 侧逻辑：**重启 `dsh web`**；`lib/client.js` 刷新即可（HMR 每 500ms 轮询）。
 
+## 0.1.16：脚本登录先试后台、失败自动换业务账号 + 安装别再走 SSH（2026-11-26）
+
+### 1. 登录：后台账号错不该拖死整条链
+
+现象：面板跑 `node source-db-pull.js`，第一行就
+`✗ 登录失败: {"flag":false,"code":-1,"desc":"用户名或密码错误"}`，可配置里业务账号密码是对的
+（面板上「账号 有 | 密码 有」）。
+
+拿 `~/.dsh/project-config.json` 里的真实凭据实测：
+
+- `server/web/login`（业务账号 15105878621）→ `{"flag":true,"code":0}`
+- 用它的会话调 `local-export` → 200、`application/octet-stream`、154365 字节、前 4 字节 `PK\x03\x04`
+  ⇒ 业务会话完全够用
+- `manager/web/login`（后台账号 80022）→ `{"flag":false,"code":-1,"desc":"用户名或密码错误"}`
+
+即：`.env` 里有 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 时脚本先走 manager，后台密码一错整条就死，
+而真正干活要的只是业务会话。
+
+改法（`scaffold/utils.js`）：
+
+```
+loginCandidates(url) → [先 manager（有 ADMIN_* 时）, 再 server]
+resolveLogin(url)    → loginCandidates(url)[0]   // 老调用点行为不变
+isLoginOk(data)      → code 0/200 或 flag === true
+login()              → 逐个试，全失败抛最后一条
+```
+
+`source-db-pull.js`、`source-api-pull.js`、`source-page-pull.js`、`source-api-push.js` 都改成拿
+candidates 逐个来；从 manager 掉到 server 时打一行 `· 后台账号登录没通过，已改用业务账号登录`。
+`source-page-push.js` **不动** —— page-import 不认 manager 会话，它本来就固定走业务账号。
+
+`help.md` 里「两套登录接口，别搞混」那张表同步改成「有 ADMIN_* → 先试 manager → 失败自动改用 server」。
+
+### 2. 三张整片推送卡收起来
+
+`source-push.js`、`source-api-push.js`、`source-page-push.js` 各加 `hidden: true`，`project: true` 留着
+（以后去掉 `hidden` 就直接带项目下拉）。11-23 放出来过、11-24 又全部要回去、11-26 再收起来 —— 来回三轮，
+这次把注释一并写明白。
+
+### 3. 目录「读取中」自愈
+
+`levelHealRef` 原来是「只兜底树根」的单个字符串，现在换成 `Map`：`expanded` 里任何 `loading` 或缺失的
+目录，1.5 秒后仍没数据就补一次 `loadLevel`（每个路径最多 2 次）。收起再展开不会重发，所以只能靠这个兜底。
+
+### 4. 安装说明：`github:` 简写要走 SSH
+
+`github:lzqzm/dsh-project-panel` 是 npm / pnpm 的简写，会被展开成 `git+ssh://git@github.com/…`，
+没配 SSH key 的机器直接报「git 无法在无人值守的情况下完成 SSH 认证」。README 里改了三处：
+
+1. 主推 `dsh plugin --profile web add https://github.com/lzqzm/dsh-project-panel.git`；
+2. 补一条兜底 `git config --global url."https://github.com/".insteadOf "git@github.com:"`
+   （公开仓库走 https 不需要任何凭据）；
+3. 再补一条**完全不碰 git** 的：GitHub 给每个 tag 自动打源码包，直接装它即可
+   `dsh plugin --profile web add https://github.com/lzqzm/dsh-project-panel/archive/refs/tags/v0.1.16.tar.gz`。
+
+市场目录里那条同样是 `github:` 简写（本机市场缓存的键就是 `github:https://github.com/lzqzm/dsh-project-panel`，
+别人的卡片上还标着 `v0.1.10` / `#b79a…`），作者侧改不到，只能等市场方换源。
+
+> 顺带把两个「别人装不上」的真实报错也记下来：一条是上面这句 SSH；另一条是桌面端市场的
+> 「已装在 profile 里，因此在运行 pnpm 之前就拒绝（`already-installed`）+ 更新前的构建未能验证恢复」——
+> 那条是桌面端管理器的保护叠上了一次被打断的 remove→install，profile 没被改动，重启一次让它收尾，
+> 不行就在市场里先卸载再装。
+
+### 验证
+
+- 回退实测（`ADMIN_PASSWORD` 故意写成 `wrong!`）：db-pull 输出
+  `· 后台账号登录没通过，已改用业务账号登录` → `✓ 登录成功` → `✓ 项目已下载: 150.75 KB` →
+  `✓ 处理了 3 个数据库配置` → `✓ 生成了 81 个表文件` → `✅ 拉取成功!`
+- 五个工作区（`localdev`、`宏一`、`宏一测试库`、`岱美`、`低代码插件测试`）各同步 `utils.js` 与四个脚本，
+  旧版备份在各自的 `.scaffold-backup-20261126-125732`。
+- 卡片表：`.probe/catalog.mjs` 现在只回 4 张（api-pull / clone / db-pull / page-pull），全部 `project: true`。
+- `node --check` 五个脚本 + 两个 lib 文件全过。
+
+### 生效方式
+
+脚本改动是磁盘文件，直接生效；`lib/index.js`（卡片表）要**重启 `dsh web`**；`lib/client.js` 刷新即可。
+

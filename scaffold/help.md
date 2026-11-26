@@ -14,7 +14,7 @@ LOCAL_URL=http://localhost:8080
 # 线上服务器地址（ENV=server 时使用）
 SERVER_URL=http://your-server.com
 
-# 设计器账号：只有在没有后台账号时才用它兜底
+# 设计器账号：后台账号没配、或后台登录没通过时用它兜底
 USERNAME=your_username
 PASSWORD=your_password
 
@@ -35,13 +35,15 @@ ENV=local
 
 ### 两套登录接口，别搞混
 
-| 有 `ADMIN_USERNAME` + `ADMIN_PASSWORD` | 走哪套 | 能干什么 |
+| `.env` 里有 `ADMIN_USERNAME` + `ADMIN_PASSWORD` | 先试哪套 | 失败了怎么办 |
 | --- | --- | --- |
-| 是 | 后台管理登录 `…/manager/web/login` | 全部：项目包拉取 / 推送，以及 openapi / crud 等**业务接口** |
-| 否 | 设计器登录 `…/server/web/login` | 只能拉取 / 推送项目包；调业务接口会返回 `{"flag":false,"code":-20,"desc":"请重新登录"}` |
+| 是 | 后台管理登录 `…/manager/web/login` | 自动改用设计器登录 `…/server/web/login`（业务账号 `USERNAME` / `PASSWORD`） |
+| 否 | 设计器登录 `…/server/web/login` | — |
 
 - 后台登录的 `projectUuid` 必须用平台固定值 `beddb82e95d14952b7a80c014c4c19c7`，**不是**当前工程的 uuid。传当前工程的 uuid 会被平台报成「用户名或密码错误」，很容易误判成密码打错。
-- 所以：**优先在面板里填后台账号密码**（面板会自动补 `ADMIN_*` 四个键）。手工写 `.env` 时把后台账号也写上，否则脚本会退回设计器登录。
+- 后台凭据填错的表现：以前是「所有脚本一上来就报用户名或密码错误」（只试后台那一套）；现在后台登录失败会自动退回业务账号，日志里多一行「后台账号登录没通过，已改用业务账号登录」，后面照常拉取 / 推送。
+- 实测（`111.1.189.38:18080`）：业务账号登录返回 `code:0`，拿它的会话调 `local-export` 能正常下到项目包 —— 所以后台账号没填对时，项目包这条路依旧是通的。
+- `source-page-push.js` 是例外：它固定走设计器登录 —— 页面导入接口不认后台管理会话，会回 `业务异常[-2]登录已超时，请重新登录`。
 
 ### 工程目录怎么摆（按服务器分文件夹）
 

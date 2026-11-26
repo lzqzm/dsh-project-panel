@@ -45,33 +45,39 @@ let cookieString = '';
 
 async function login() {
     console.log('[1/4] 登录获取授权...');
-    // 业务接口（openapi / crud）只认后台管理会话，走 utils.resolveLogin 决定用哪套登录
-    const cfg = utils.resolveLogin(SERVER_URL);
+    // 后台管理登录优先（多数业务接口认它的会话），那对凭据不对时接着试业务账号登录。
+    const candidates = utils.loginCandidates(SERVER_URL);
+    let lastError = '';
 
-    try {
-        const response = await axios.post(cfg.url, cfg.body, {
-            headers: {
-                'Content-Type': 'application/json'
+    for (const cfg of candidates) {
+        try {
+            const response = await axios.post(cfg.url, cfg.body, {
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            // 从响应头中提取 cookie
+            const setCookie = response.headers['set-cookie'];
+            if (setCookie && Array.isArray(setCookie)) {
+                cookieString = setCookie.map(c => c.split(';')[0]).join('; ');
             }
-        });
 
-        // 从响应头中提取 cookie
-        const setCookie = response.headers['set-cookie'];
-        if (setCookie && Array.isArray(setCookie)) {
-            cookieString = setCookie.map(c => c.split(';')[0]).join('; ');
+            if (utils.isLoginOk(response.data)) {
+                if (cfg.mode === 'server' && candidates.length > 1) {
+                    console.log('  · 后台账号登录没通过，已改用业务账号登录');
+                }
+                console.log('✓ 登录成功');
+                return true;
+            }
+            lastError = JSON.stringify(response.data);
+        } catch (error) {
+            lastError = error.message;
         }
-
-        if (response.data && (response.data.code === 0 || response.data.flag === true)) {
-            console.log('✓ 登录成功');
-            return true;
-        } else {
-            console.error(`✗ 登录失败: ${JSON.stringify(response.data)}`);
-            return false;
-        }
-    } catch (error) {
-        console.error(`✗ 登录失败: ${error.message}`);
-        return false;
     }
+
+    console.error(`✗ 登录失败: ${lastError}`);
+    return false;
 }
 
 async function downloadProject() {

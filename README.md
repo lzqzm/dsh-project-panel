@@ -17,13 +17,32 @@ MagicalCoder 风格的工程是一套约定目录：页面由 `page.json` + `ind
 
 ## 一、安装
 
-命令行装（推荐）：
+命令行装（推荐，走 HTTPS，不需要 SSH key）：
 
 ```bash
-dsh plugin --profile web add github:lzqzm/dsh-project-panel
+dsh plugin --profile web add https://github.com/lzqzm/dsh-project-panel.git
 ```
 
+> 如果报 **「git 无法在无人值守的情况下完成 SSH 认证」**，说明用的是 `github:lzqzm/dsh-project-panel` 这种简写 —— npm / pnpm 会把它展开成 `git+ssh://git@github.com/…`，没配 SSH key 的机器必然失败。三条路：
+>
+> - 换成上面那行 HTTPS 地址（推荐）；
+> - 或者让 git 把 GitHub 的 SSH 地址一律改写成 HTTPS（公开仓库不需要任何凭据）：
+>
+>   ```bash
+>   git config --global url."https://github.com/".insteadOf "git@github.com:"
+>   ```
+>
+> - 或者**完全不碰 git**：GitHub 给每个 tag 自动打源码包，pnpm 直接下载解包，不调 git：
+>
+>   ```bash
+>   dsh plugin --profile web add https://github.com/lzqzm/dsh-project-panel/archive/refs/tags/v0.1.16.tar.gz
+>   ```
+>
+>   把 `v0.1.16` 换成你要的版本就行（[全部 tag](https://github.com/lzqzm/dsh-project-panel/tags)）。机器上 `git` 坏了、SSH 没配、代理不通，这条路都不受影响。
+
 插件市场：已提交 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 收录，通过审核后可以直接在「设置 → 插件中心」里搜「工程面板」或 `dsh-project-panel`。
+
+> 市场里那条的安装源同样是 `github:lzqzm/dsh-project-panel`（SSH），所以**在市场点安装也会撞上同一个报错**。要么先按上面第二条命令改写 git 地址再点安装，要么告诉市场维护方把条目换成 HTTPS。
 
 本地开发（`link:` 安装，装的是你正在改的那份源码）：
 
@@ -258,7 +277,7 @@ dsh plugin --profile web add D:\path\to\dsh-project-panel
 
 ## 九、更新插件
 
-**从市场装的（`github:` 源）**：市场会比对「已安装的 commit」和「仓库 HEAD」，有新的就出现更新按钮，点一下重跑安装，**不用卸载重装**。
+**从市场装的（`github:` 源）**：市场会比对「已安装的 commit」和「仓库 HEAD」，有新的就出现更新按钮，点一下重跑安装，**不用卸载重装**。这一路的更新同样走 git，所以 SSH 认证那个坑一样避不开 —— 按「一、安装」里的三条办法处理一次即可（市场记录的还是原来的源，不用重装）。
 
 **本地 `link:` 装的**：市场不会给更新入口（设计如此：`link:` 是开发工作区，永远不参与在线更新）。但你也不需要 —— 装的就是你正在改的那份源码，改完刷新页面（client）或重启 `dsh web`（host）即可。
 

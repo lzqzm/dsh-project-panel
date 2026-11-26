@@ -150,16 +150,30 @@ async function main() {
         console.log('[1/5] 登录...');
         // 密码不拼进命令行：那样会出现在进程列表里，而且密码含 " 或 $ 时还会把命令拼坏。
         // 改成 --data-binary @- 从 stdin 喂 JSON body。
-        // 业务接口（openapi / crud）只认后台管理会话，走 utils.resolveLogin 决定用哪套登录。
-        const cfg = utils.resolveLogin(SERVER_URL);
-        const loginCmd = `curl -s -c "${cookiesFile}" -X POST "${cfg.url}" -H "Content-Type: application/json" --data-binary @-`;
-        const loginResponse = execSync(loginCmd, {
-            encoding: 'utf-8',
-            input: JSON.stringify(cfg.body)
-        });
+        // 后台管理登录优先（多数业务接口认它的会话），那对凭据不对时接着试业务账号登录。
+        const candidates = utils.loginCandidates(SERVER_URL);
+        let loggedIn = false;
+        let lastError = '';
 
-        if (!loginResponse.includes('"code":0')) {
-            console.error(`✗ 登录失败: ${loginResponse}`);
+        for (const cfg of candidates) {
+            const loginCmd = `curl -s -c "${cookiesFile}" -X POST "${cfg.url}" -H "Content-Type: application/json" --data-binary @-`;
+            const loginResponse = execSync(loginCmd, {
+                encoding: 'utf-8',
+                input: JSON.stringify(cfg.body)
+            });
+
+            if (loginResponse.includes('"code":0')) {
+                if (cfg.mode === 'server' && candidates.length > 1) {
+                    console.log('  · 后台账号登录没通过，已改用业务账号登录');
+                }
+                loggedIn = true;
+                break;
+            }
+            lastError = loginResponse;
+        }
+
+        if (!loggedIn) {
+            console.error(`✗ 登录失败: ${lastError}`);
             process.exit(1);
         }
         console.log('✓ 登录成功');
