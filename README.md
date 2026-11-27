@@ -2,6 +2,8 @@
 
 > DeepSeek Harness Web 端的**低代码工程面板**：把 MagicalCoder 风格的工程目录搬进会话侧栏 —— 文件树、推送状态、源码编辑、推送前校验、工程脚本，一处看全。
 
+> ⚠️ **本插件没有发布到 npm。** npm 上有一个同名的 `dsh-project-panel@0.1.1`，那是**别人的包**（描述是 “Project progress panel: aggregates status.json anchors…”），与本项目无关。在 DSH「添加插件」里把安装源选成 **npm 官方源**再输入 `dsh-project-panel`，装到的就是它 —— 版本旧、功能也不是工程面板。请按下面「一、安装」里的命令装，或者从插件市场「发现」页装。
+
 MagicalCoder 风格的工程是一套约定目录：页面由 `page.json` + `index.html` + `page.js` 三件套组成，接口是 `meta.json`，工程脚本叫 `source-*.js`，页面里必须有 `magicalDragScene` 容器，调平台接口要走 `/magical_lowcode/` 前缀……这些约定在普通编辑器里全靠记性和手工核对。
 
 这个插件把它们变成看得见、点得动的东西。
@@ -17,13 +19,31 @@ MagicalCoder 风格的工程是一套约定目录：页面由 `page.json` + `ind
 
 ## 一、安装
 
-命令行装（推荐，走 HTTPS，不需要 SSH key）：
+### 方式一：插件市场（推荐）
+
+「插件市场 → 发现」里搜「工程面板」或 `dsh-project-panel`（[市场页](https://awesome-dsh-plugin.com/p/lzqzm/dsh-project-panel/)），点安装即可。市场里那条的安装地址是 GitHub Release 的 `dsh-project-panel.tgz`，不碰 npm、不碰 git。
+
+### 方式二：命令行（走 HTTPS + Release 包，不需要 git / SSH）
+
+```bash
+dsh plugin --profile web add -w "https://github.com/lzqzm/dsh-project-panel/releases/latest/download/dsh-project-panel.tgz"
+```
+
+`latest` 永远指向最新 release。要固定版本就把 `latest/download` 换成 `download/v0.1.18`：
+
+```bash
+dsh plugin --profile web add -w "https://github.com/lzqzm/dsh-project-panel/releases/download/v0.1.18/dsh-project-panel.tgz"
+```
+
+> ❗ **不要用 npm 源装。** 本插件从未发布到 npm，npm 上的 `dsh-project-panel` 是别人的包（0.1.1，功能也完全不是工程面板），装了用不了。
+
+### 方式三：git 地址（需要机器上有可用的 git）
 
 ```bash
 dsh plugin --profile web add https://github.com/lzqzm/dsh-project-panel.git
 ```
 
-> 如果报 **「git 无法在无人值守的情况下完成 SSH 认证」**，说明用的是 `github:lzqzm/dsh-project-panel` 这种简写 —— npm / pnpm 会把它展开成 `git+ssh://git@github.com/…`，没配 SSH key 的机器必然失败。三条路：
+> 如果报 **「git 无法在无人值守的情况下完成 SSH 认证」**，说明用的是 `github:lzqzm/dsh-project-panel` 这种简写 —— npm / pnpm 会把它展开成 `git+ssh://git@github.com/…`，没配 SSH key 的机器必然失败。两条路：
 >
 > - 换成上面那行 HTTPS 地址（推荐）；
 > - 或者让 git 把 GitHub 的 SSH 地址一律改写成 HTTPS（公开仓库不需要任何凭据）：
@@ -31,20 +51,8 @@ dsh plugin --profile web add https://github.com/lzqzm/dsh-project-panel.git
 >   ```bash
 >   git config --global url."https://github.com/".insteadOf "git@github.com:"
 >   ```
->
-> - 或者**完全不碰 git**：GitHub 给每个 tag 自动打源码包，pnpm 直接下载解包，不调 git：
->
->   ```bash
->   dsh plugin --profile web add https://github.com/lzqzm/dsh-project-panel/archive/refs/tags/v0.1.16.tar.gz
->   ```
->
->   把 `v0.1.16` 换成你要的版本就行（[全部 tag](https://github.com/lzqzm/dsh-project-panel/tags)）。机器上 `git` 坏了、SSH 没配、代理不通，这条路都不受影响。
 
-插件市场：已提交 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 收录，通过审核后可以直接在「设置 → 插件中心」里搜「工程面板」或 `dsh-project-panel`。
-
-> 市场里那条的安装源同样是 `github:lzqzm/dsh-project-panel`（SSH），所以**在市场点安装也会撞上同一个报错**。要么先按上面第二条命令改写 git 地址再点安装，要么告诉市场维护方把条目换成 HTTPS。
-
-本地开发（`link:` 安装，装的是你正在改的那份源码）：
+### 方式四：本地开发（`link:` 安装，装的是你正在改的那份源码）
 
 ```bash
 dsh plugin --profile web add D:\path\to\dsh-project-panel

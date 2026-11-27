@@ -3432,3 +3432,47 @@ node scripts/publish-release.mjs --dry-run        # 只打包，不碰 API
   版本号 / 更新按钮由 awesome-dsh-plugin.com 定时抓取，通常一天内刷新；
 - 脚本会挡住两类事故：远端没这个 tag、同 tag 的 release 已经存在；
 - 发版前跑一次 `npm run build:vendor`（若动了那四个依赖），确认 `scaffold/vendor/` 是新的。
+
+---
+
+## 名字撞车：npm 上的 `dsh-project-panel` 不是本插件
+
+2026-11-27 有客户在桌面端「添加插件」里把安装源切成 **npm 官方源**、输入 `dsh-project-panel`，
+装出来的是 **0.1.1**，界面/功能全不对。
+
+查 npm registry：`dsh-project-panel` 属于账号 `kialajin`（kialajin@hotmail.com），
+2026-10-27 先发 `0.0.0-stage` 占位、两分钟后再发 `0.1.1`（描述是
+"Project progress panel: aggregates status.json anchors…"）。我们**从没往 npm 发布过**这个包
+（市场条目里 `npm: null`，安装地址一直是 GitHub Release tarball），所以「npm 源 + 裸包名」这条路
+永远装到别人的包。名字在对方手里，我们没权限覆盖，也发不了同名。
+
+因此采取「把正确路径写显眼、把错误路径标出来」：
+
+- `README.md` 顶部和「一、安装」里写明 npm 上的同名包与本插件无关，并给出市场 / Release tarball 两种装法；
+- `scaffold/help.md` 顶部同样加一句（工程脚本常被单独转发给客户）；
+- `package.json` 的 `description` 末尾补一句提示（会出现在市场卡片和数据接口里）。
+
+要彻底让「npm 源」也能装对，只能用自己的账号发**新包名**（如 `@lzqm/dsh-project-panel`），
+再把市场条目的 `npm` 字段指过去 —— 裸名 `dsh-project-panel` 收不回来。
+
+---
+
+## 0.1.19：加 npm 官方镜像包，并把「别用 npm 裸名装」写进文档
+
+配合上一节的撞名问题，这版做了两件事：
+
+1. **文档层面**：README 顶部与「一、安装」、`scaffold/help.md` 顶部、`package.json` description
+   都写明了「npm 上的 `dsh-project-panel` 不是本插件」，正确装法指向市场与 Release tarball。
+2. **npm 官方镜像**：新增 `scripts/publish-npm.mjs`，把同一份代码发布成
+   `@lzqm/dsh-project-panel` —— npm 源里填这个名字才能装到本插件。
+   脚本从 `npm pack` 产物里解一份副本，只改 `package.json` 的 name 和
+   `cordis.patch.yml` 的 id/name，源仓库、tag、Release 资产（`dsh-project-panel.tgz`）都不动，
+   所以市场安装与已装用户的升级路径完全不受影响。
+
+`ash
+npm login --registry=https://registry.npmjs.org   # 账号 lzqm
+npm run publish:npm                                # 或 node scripts/publish-npm.mjs --dry-run
+`
+
+注意：裸名 `dsh-project-panel` 在 npm 上属于别人，收不回来；`@lzqm/dsh-project-panel`
+只是给「必须走 npm 源」的场景一个正确入口，市场安装仍然以 Release tarball 为准。

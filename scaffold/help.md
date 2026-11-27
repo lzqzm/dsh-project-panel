@@ -2,6 +2,8 @@
 
 本地开发工具集，用于在本地和线上环境之间同步 API、页面和数据库配置。
 
+> ⚠️ 这套脚本属于 **dsh-project-panel** 插件。该插件**没有发布到 npm** —— npm 上的 `dsh-project-panel@0.1.1` 是别人的包，与本插件无关。安装请走插件市场或 GitHub Release 的 tarball（见插件 README 的「一、安装」），不要在「添加插件」里选 npm 源。
+
 ## 依赖
 
 脚本要用 `axios` / `archiver` / `form-data` / `unzipper` 四个包，但**不需要你安装**：
