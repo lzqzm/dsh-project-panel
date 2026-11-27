@@ -3285,4 +3285,56 @@ candidates 逐个来；从 manager 掉到 server 时打一行 `· 后台账号�
 ### 生效方式
 
 脚本改动是磁盘文件，直接生效；`lib/index.js`（卡片表）要**重启 `dsh web`**；`lib/client.js` 刷新即可。
+## 0.1.17：模板依赖不进 dependencies —— 桌面端市场装不上的真正原因（2026-11-27）
 
+### 报错
+
+桌面端从市场装 0.1.16 时，pnpm 明明跑完了、也 promote 过了，最后被 DSH 自己的
+generation 校验拦下：
+
+```
+generation-install: installed in 65852ms
+generation-install: promoted to dsh-project-panel+0.1.16+1c7571253022
+generation-install: generation peer validation failed: readable-stream: string_decoder
+resolves outside the generation and installation closure; string_decoder; …
+```
+
+### 原因
+
+`dependencies` 里那四个包（axios / archiver / form-data / unzipper）插件自己一行都不
+import，只给铺到工作区的脚本用，但它们的传递依赖一路带下来：
+
+- `unzipper@0.10` → `readable-stream@~2.3.6` → `string_decoder`
+- `archiver@6` → `readable-stream@^3.6.0` → `string_decoder`
+
+pnpm 把依赖摊到 generation 目录外，DSH 的闭包校验就把 `string_decoder` 判成「解析到
+闭包外」，整个安装回滚。这不是我们代码的 bug，但只有我们能避开。
+
+### 改法
+
+**把四个包从 `dependencies` 挪到 `devDependencies`**，插件本体回到真正的零运行时依赖；
+改在用到时装到 `DSH_HOME/scaffold-deps`（所有工作区共用一份），跑脚本时照旧用
+`NODE_PATH` 指过去：
+
+- `scaffoldModules()` 先查 `~/.dsh/scaffold-deps/node_modules`，再查插件目录（`link:` 开发用），
+  最后才往上找 profile 的 `node_modules`；
+- `startScaffoldInstall()` 改成 `npm install --no-audit --no-fund --omit=dev axios archiver
+  form-data unzipper`，`cwd` 是那个目录；
+- `hasScaffoldDeps()` 从「目录存在」改成「`<包>/package.json` 存在」—— 装的途中被打断会
+  留下空壳目录，只看目录会误判成装好了（这次真遇到，空壳摆了 12 秒）；
+- 客户端那句「只装一次，装在插件目录里」的注释同步改掉。
+
+### 验证
+
+- `npm pack` 出来的包 `pnpm add file:<tgz>` 后，`node_modules` 里只有 `dsh-project-panel` +
+  `.pnpm`，**没有** readable-stream / string_decoder / fstream / bluebird。
+- 临时 `DSH_HOME` 里跑真安装：`projectScaffoldDeps` 回 `busy:true` → 4 秒装齐四个包 →
+  再调一次回 `reused:true`，`modules` 指向 `…\scaffold-deps\node_modules`；
+  `NODE_PATH` 指过去 `require('axios'|'archiver'|'form-data'|'unzipper')` 全过。
+- 空壳目录（只建了四个空目录）不再被误判：会重新装一遍。
+- `node --check lib/index.js` / `lib/client.js` 通过。
+
+### 生效方式
+
+`lib/index.js` 要**重启 `dsh web`**；`lib/client.js` 刷新即可。桌面端市场装 0.1.17 应该就能过
+generation 校验 —— 装完第一次点「装依赖」会把四个包装到 `~/.dsh/scaffold-deps`。
