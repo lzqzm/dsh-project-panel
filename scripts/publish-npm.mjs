@@ -33,7 +33,7 @@ const otpIndex = process.argv.indexOf('--otp');
 const otp = otpIndex >= 0 ? (process.argv[otpIndex + 1] ?? '') : '';
 
 function run(cmd, args, opts = {}) {
-	return execFileSync(cmd, args, { cwd: ROOT, encoding: 'utf8', shell: process.platform === 'win32', ...opts });
+	return execFileSync(cmd, args, { cwd: ROOT, encoding: 'utf8', ...opts });
 }
 
 /**
