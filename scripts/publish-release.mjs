@@ -17,9 +17,9 @@
  * 不发 PAT、不打印 token、不落盘。需要该账号对仓库有写权限。
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync, statSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const REPO = "lzqzm/dsh-project-panel";
 const ASSET_NAME = "dsh-project-panel.tgz";
@@ -88,11 +88,17 @@ const body = notesFile === "" ? "## " + version + "\n\n详见 NOTES.md。" : rea
 const work = mkdtempSync(join(tmpdir(), "dsh-release-"));
 try {
 	/* npm pack 的产物名是 <name>-<version>.tgz，市场要的是固定名 dsh-project-panel.tgz。 */
-	const pack = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["pack", "--pack-destination", work], {
-		cwd: ROOT,
-		encoding: "utf8",
-		shell: process.platform === "win32"
-	});
+	const npmEntry = join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+	const npmReady = existsSync(npmEntry);
+	const pack = spawnSync(
+		npmReady ? process.execPath : process.platform === "win32" ? "npm.cmd" : "npm",
+		npmReady ? [npmEntry, "pack", "--pack-destination", work] : ["pack", "--pack-destination", work],
+		{
+			cwd: ROOT,
+			encoding: "utf8",
+			shell: npmReady ? false : process.platform === "win32"
+		}
+	);
 	if (pack.status !== 0) fail("npm pack 失败：" + (pack.stderr || pack.stdout || "").slice(-500));
 	const packed = pack.stdout.trim().split(/\r?\n/).filter((line) => line.endsWith(".tgz")).pop();
 	if (packed === undefined) fail("没认出 npm pack 的产物名：" + pack.stdout);
