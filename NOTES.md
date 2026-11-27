@@ -3498,3 +3498,15 @@ tarball 801.5 kB，`latest` 指向它。发版过程比预想麻烦，记下来�
    `404 [NOT_FOUND] /-/stage not found`。
 5. **脚本不再走 shell**。Node 24 下 `spawnSync('npm', args, { shell: true })` 会报 DEP0190
    （参数不转义）；`scripts/publish-npm.mjs` 改成直接执行 `node_modules/npm/bin/npm-cli.js`。
+
+## 0.1.20：npm 页面文案对齐
+
+0.1.19 的 tarball 里 README 还是「本插件没有发布到 npm」的旧说法，而 npm 包页面直接展示 tarball
+里的 README，所以页面文案会自相矛盾。0.1.20 只改文档与 `description`：
+
+- README 顶部 ⚠️ 与「一、安装」把「本插件没发布到 npm」改成「本插件在 npm 上是
+  `@lzqzm/dsh-project-panel`，裸名 `dsh-project-panel` 属于别人」；
+- 新增「方式二：npm（记得带 `@lzqzm/` 前缀）」；
+- `package.json` 的 `description` 同步。
+
+功能与 0.1.19 完全一致。

@@ -1,7 +1,7 @@
 {
   "name": "dsh-project-panel",
-  "version": "0.1.19",
-  "description": "DSH 工程面板：把低代码工程目录树搬进 web 端 —— 左栏常驻图标 + 中栏工程浏览器（多级文件树 / 推送状态 / 文件内容）。注意：npm 上的同名包与本插件无关，请从插件市场或 GitHub Release 安装（见 README）。",
+  "version": "0.1.20",
+  "description": "DSH 工程面板：把低代码工程目录树搬进 web 端 —— 左栏常驻图标 + 中栏工程浏览器（多级文件树 / 推送状态 / 文件内容）。npm 上的裸名 dsh-project-panel 是别人的包，本插件在 npm 上叫 @lzqzm/dsh-project-panel（见 README）。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
