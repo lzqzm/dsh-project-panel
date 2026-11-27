@@ -3407,3 +3407,28 @@ node scripts/build-vendor.mjs   # → scaffold/vendor/deps.cjs + 四个转发包
 
 改 `devDependencies` 里这四个包的版本后，重跑 `npm run build:vendor` 并把
 `scaffold/vendor/` 一起提交 —— 它是产物，不要手改。
+
+## 怎么发版（发布到插件市场）
+
+市场**不读 npm**：条目里的安装地址是
+`https://github.com/lzqzm/dsh-project-panel/releases/latest/download/dsh-project-panel.tgz`，
+站点按仓库「最新 release」判断有没有新版。所以**发一个 GitHub Release 就是发布**，
+不用 `npm publish`（npm 上那条 0.1.1 是早期遗留，跟市场无关），也不用改市场索引。
+
+```bash
+# 1. 改 package.json 版本号 → 提交 → 打 tag → push（tag 必须是远端有的，否则市场点进去 404）
+git add -A && git commit -m "feat: …（0.1.19）" && git tag v0.1.19 && git push origin main --tags
+
+# 2. 发 release：自动 npm pack、改名、建 release、传资产（凭据取本机 Git Credential Manager）
+node scripts/publish-release.mjs --notes 发布说明.md
+node scripts/publish-release.mjs --dry-run        # 只打包，不碰 API
+```
+
+要点：
+
+- 资产名必须**正好** `dsh-project-panel.tgz`（市场 URL 里写死了这个名字）；
+  脚本会把 `dsh-project-panel-<version>.tgz` 改好名再传；
+- `releases/latest/download/…` 在 release 建好的瞬间就指向新版，市场卡片上的
+  版本号 / 更新按钮由 awesome-dsh-plugin.com 定时抓取，通常一天内刷新；
+- 脚本会挡住两类事故：远端没这个 tag、同 tag 的 release 已经存在；
+- 发版前跑一次 `npm run build:vendor`（若动了那四个依赖），确认 `scaffold/vendor/` 是新的。

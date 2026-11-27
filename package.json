@@ -73,6 +73,7 @@
   },
   "scripts": {
     "build:vendor": "node scripts/build-vendor.mjs",
+    "release": "node scripts/publish-release.mjs",
     "build:editor": "esbuild src/editor.js --bundle --format=iife --target=es2022 --minify --legal-comments=none --outfile=lib/client.editor.js",
     "watch:editor": "esbuild src/editor.js --bundle --format=iife --target=es2022 --minify --legal-comments=none --outfile=lib/client.editor.js --watch"
   },
