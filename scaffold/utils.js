@@ -15,8 +15,42 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
-const archiver = require('archiver');
-const unzipper = require('unzipper');
+
+/**
+ * 取一个外部依赖（axios / archiver / form-data / unzipper）。
+ *
+ * 正常情况下直接 require：面板跑脚本时会注入 NODE_PATH，装过 node_modules 的目录
+ * 也能直接找到。都找不到时退回面板铺过来的 `.mc-deps/deps.cjs` —— 那是随插件发布
+ * 的一份 bundle，客户机器上什么都不用装也能跑。手动在终端跑脚本（没有 NODE_PATH）
+ * 走的也是这条兜底。
+ */
+function loadDep(name) {
+    try {
+        return require(name);
+    } catch (error) {
+        const bundled = path.join(__dirname, '.mc-deps', 'deps.cjs');
+        if (fs.existsSync(bundled)) {
+            let deps;
+            try {
+                deps = require(bundled);
+            } catch (bundleError) {
+                throw new Error('内置依赖包加载失败（' + bundled + '）：' + bundleError.message);
+            }
+            // bundle 里 form-data 的键叫 FormData；两种写法都认。
+            const picked = deps[name] !== undefined ? deps[name] : (name === 'form-data' ? deps.FormData : undefined);
+            if (picked !== undefined) return picked;
+        }
+        throw new Error(
+            '缺少依赖 ' + name + '，也没找到内置依赖包 ' + bundled + '。\n' +
+            '请用「工程面板 → 铺脚手架」重新铺一次；或在当前目录跑 ' +
+            'npm install axios archiver form-data unzipper。\n' +
+            '原始错误：' + error.message
+        );
+    }
+}
+
+const archiver = loadDep('archiver');
+const unzipper = loadDep('unzipper');
 
 /**
  * 加载 .env 文件（强制覆盖系统环境变量）
@@ -641,6 +675,7 @@ function getTimestamp() {
 // 导出所有工具函数
 module.exports = {
     SOURCE_FILE,
+    loadDep,
     loadEnv,
     generateUUID,
     serverKey,

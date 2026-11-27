@@ -3338,3 +3338,72 @@ pnpm 把依赖摊到 generation 目录外，DSH 的闭包校验就把 `string_de
 
 `lib/index.js` 要**重启 `dsh web`**；`lib/client.js` 刷新即可。桌面端市场装 0.1.17 应该就能过
 generation 校验 —— 装完第一次点「装依赖」会把四个包装到 `~/.dsh/scaffold-deps`。
+
+---
+
+# 0.1.18：客户机器没有 npm —— 依赖改成随包自带
+
+## 现象
+
+客户现场（Windows，DSH 桌面端）在面板里跑 `node source-clone.js`，退出码 1：
+
+```
+code: 'MODULE_NOT_FOUND'
+at Object.<anonymous> (...\utils.js:18:18)
+requireStack: [ '...\utils.js', '...\source-clone.js' ]
+```
+
+`utils.js:18` 是 `const archiver = require('archiver');`。客户工作区里没有 `node_modules`；
+面板里的「装依赖」点了没反应，有两个原因：
+
+1. 桌面端内置的 Node 不带 npm，`npmCli()` 找不到 `npm-cli.js`，直接抛 `no-npm`；
+2. 就算抛了也看不见：`client.js` 先 `setNotice("…装依赖失败…")`，下一行又
+   `setNotice("铺好了 N 个文件…")` 把它盖掉了。
+
+## 做法：esbuild 打一个 0.8MB 的兜底包
+
+把 `axios` / `archiver` / `form-data` / `unzipper` 用 esbuild 打成单个 CJS：
+
+```
+node scripts/build-vendor.mjs   # → scaffold/vendor/deps.cjs + 四个转发包
+```
+
+- `scaffold/vendor/deps.cjs`（834KB，`--format=cjs --platform=node --target=node22 --minify --legal-comments=eof`）；
+- `scaffold/vendor/<name>/{package.json,index.js}`：让 `NODE_PATH=<vendor>` 时 `require('axios')` 解析到 bundle；
+- 产物随 `scaffold/` 一起发（`files` 已含 scaffold），`scripts/` 不进包（`npm pack` 实测 0 个）。
+
+为什么不用全量 node_modules：四个包的闭包 177 个文件、17.24MB，进仓库太重。
+
+## 运行链路
+
+1. `scaffoldModules()` 最先返回 `SCAFFOLD_VENDOR`（`hasScaffoldDeps` 认四个转发包的
+   `package.json`），于是 `projectGetConfig` 的 `scaffold.ready` 恒为 true，界面不再显示「装依赖」；
+2. `projectRunScript` **始终**注入 `NODE_PATH = vendor + delimiter + 原有 NODE_PATH`。
+   以前只在工作区没有 `node_modules` 时才设 —— 平台拉过的目录有 `node_modules` 却缺
+   archiver，照样炸。Node 自己先查脚本目录的 `node_modules`，所以工作区那份仍然优先；
+3. `scaffoldCopy` 把 bundle 铺到工作区根的 `.mc-deps/deps.cjs`（按大小判断，变了才覆盖）；
+4. `scaffold/utils.js` 新增 `loadDep(name)`，其余 5 个脚本改用它：
+   `require(name)` 失败 → `require(<工作区>/.mc-deps/deps.cjs)[name]`（form-data 兼容
+   `FormData` 键）→ 都没有才抛中文提示。手动在终端跑脚本（没有 NODE_PATH）靠的就是这条；
+5. 客户端「装依赖」失败的提示改成拼进最后那条 `setNotice`，不再被覆盖。
+
+## 验证
+
+- `node scripts/build-vendor.mjs` → 0.80MB；`NODE_PATH=vendor` 下
+  `require('axios'|'archiver'|'form-data'|'unzipper')` 全过；
+- 模拟客户目录（无 `node_modules`）：
+  - 只给面板注入的 NODE_PATH → `utils.js` 加载成功，`createZip`/`extractZip` 往返内容正确；
+  - 只给 `.mc-deps/deps.cjs`（终端手跑场景）→ 同样通过；
+  - 两者都没有 → 抛「缺少依赖 archiver，也没找到内置依赖包 …」，不再是 `MODULE_NOT_FOUND` 栈；
+- `npm pack --dry-run` 清单里 `scaffold/vendor/*` 10 个文件都在；
+- `node --check lib/index.js` / `lib/client.js`、`new Function` 检查 8 个 CJS 脚本全过。
+
+## 生效方式
+
+`lib/index.js` 要重启 `dsh web`；`lib/client.js` 刷新即可。客户那边**不需要 Node 工程 / npm**，
+换成 0.1.18 后重铺一次脚手架（会铺 `.mc-deps`）就能直接跑。
+
+## 维护
+
+改 `devDependencies` 里这四个包的版本后，重跑 `npm run build:vendor` 并把
+`scaffold/vendor/` 一起提交 —— 它是产物，不要手改。

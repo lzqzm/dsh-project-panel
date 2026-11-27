@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * source-pull.js - 从低代码平台拉取项目，生成项目目录
+ * source-clone.js - 从低代码平台拉取项目，生成项目目录
  *
- * 用法: node source-pull.js [project_uuid]
+ * 用法: node source-clone.js [project_uuid]
  *
  * 环境变量:
  *   SERVER_URL      - 服务器地址 (默认: http://localhost:8080)
@@ -15,15 +15,15 @@
  *
  * 示例:
  *   # 拉取所有文件
- *   node source-pull.js aaaabbbbccccddddeeeeffff00001111
+ *   node source-clone.js aaaabbbbccccddddeeeeffff00001111
  *
  *   # 只拉取页面
  *   # 在 .env 中配置: PULL_FILE=[ 'page']
- *   node source-pull.js aaaabbbbccccddddeeeeffff00001111
+ *   node source-clone.js aaaabbbbccccddddeeeeffff00001111
  *
  *   # 只拉取页面和API
  *   # 在 .env 中配置: PULL_FILE=[ 'page', 'api']
- *   node source-pull.js aaaabbbbccccddddeeeeffff00001111
+ *   node source-clone.js aaaabbbbccccddddeeeeffff00001111
  */
 
 const { execSync } = require('child_process');
@@ -42,9 +42,9 @@ if (!PROJECT_UUID) {
     console.error('❌ 错误: 请提供项目UUID或配置 .env 中的 PROJECT_UUID');
     console.error('');
     console.error('用法:');
-    console.error('  node source-pull.js <project_uuid>');
+    console.error('  node source-clone.js <project_uuid>');
     console.error('  或在 .env 中配置 PROJECT_UUID 后直接运行:');
-    console.error('  node source-pull.js');
+    console.error('  node source-clone.js');
     process.exit(1);
 }
 

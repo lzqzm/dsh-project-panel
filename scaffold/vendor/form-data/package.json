@@ -1,0 +1,6 @@
+{
+  "name": "form-data",
+  "version": "0.0.0-dsh-vendor",
+  "private": true,
+  "main": "index.js"
+}

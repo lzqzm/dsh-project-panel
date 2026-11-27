@@ -1,6 +1,6 @@
 {
   "name": "dsh-project-panel",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "DSH 工程面板：把低代码工程目录树搬进 web 端 —— 左栏常驻图标 + 中栏工程浏览器（多级文件树 / 推送状态 / 文件内容）。",
   "type": "module",
   "main": "lib/index.js",
@@ -72,10 +72,11 @@
     "dsh": ">=0.2.0-0"
   },
   "scripts": {
+    "build:vendor": "node scripts/build-vendor.mjs",
     "build:editor": "esbuild src/editor.js --bundle --format=iife --target=es2022 --minify --legal-comments=none --outfile=lib/client.editor.js",
     "watch:editor": "esbuild src/editor.js --bundle --format=iife --target=es2022 --minify --legal-comments=none --outfile=lib/client.editor.js --watch"
   },
-  "//devDependencies": "archiver / axios / form-data / unzipper 不是 lib/index.js 自己 import 的，而是插件自带脚手架（scaffold/ 里的 source-*.js）要用的。**必须留在 devDependencies**：它们的传递依赖（unzipper → readable-stream@2 → string_decoder、archiver → readable-stream@3 → string_decoder）会被 DSH 的 generation peer validation 判成「解析到闭包外」，桌面端 / 市场直接装不上（2026-11-27 实测 generation-install: generation peer validation failed）。运行时装到 DSH_HOME/scaffold-deps，靠 NODE_PATH 指过去复用，版本范围照抄平台下发的 localdev/package.json。",
+  "//devDependencies": "archiver / axios / form-data / unzipper 不是 lib/index.js 自己 import 的，而是插件自带脚手架（scaffold/ 里的 source-*.js）要用的。**必须留在 devDependencies**：它们的传递依赖（unzipper → readable-stream@2 → string_decoder、archiver → readable-stream@3 → string_decoder）会被 DSH 的 generation peer validation 判成「解析到闭包外」，桌面端 / 市场直接装不上（2026-11-27 实测 generation-install: generation peer validation failed）。发布的包里不带 node_modules：改版本后跑一次 `npm run build:vendor`，把打好的 scaffold/vendor/deps.cjs 一起提交 —— 客户机器上没有 npm，全靠它兜底。",
   "devDependencies": {
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-css": "^6.3.1",

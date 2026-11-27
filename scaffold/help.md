@@ -2,6 +2,15 @@
 
 本地开发工具集，用于在本地和线上环境之间同步 API、页面和数据库配置。
 
+## 依赖
+
+脚本要用 `axios` / `archiver` / `form-data` / `unzipper` 四个包，但**不需要你安装**：
+
+- **在面板里跑**：面板会给脚本注入 `NODE_PATH`，指向插件自带的依赖包；
+- **在终端里跑**：铺脚手架时已经把依赖包铺到了工作区根的 `.mc-deps/deps.cjs`，`require` 不到时脚本会自动从它加载。
+
+只有插件的 `scaffold/vendor` 被删掉时才会提示「缺少依赖」——重新装一次插件，或在面板里再点一次「铺脚手架」即可。
+
 ## 环境配置
 
 在 `.env` 文件中配置：
@@ -104,31 +113,7 @@ PULL_FILE=[ 'page', 'api'] node source-clone.js aaaabbbbccccddddeeeeffff00001111
 
 ---
 
-### 2. source-pull.js - 拉取项目（支持按类型）
-
-从线上拉取项目，支持指定要拉取的类型。
-
-```bash
-node source-pull.js <project_uuid>
-```
-
-**环境变量：**
-- `PULL_FILE` - 指定要拉取的文件类型
-  - 可选值：`page`, `api`, `database`
-  - 示例：`PULL_FILE=[ 'page', 'api']`
-
-**示例：**
-```bash
-# 拉取所有类型
-node source-pull.js aaaabbbbccccddddeeeeffff00001111
-
-# 只拉取页面
-PULL_FILE=[ 'page'] node source-pull.js aaaabbbbccccddddeeeeffff00001111
-```
-
----
-
-### 3. source-push.js - 全量推送项目
+### 2. source-push.js - 全量推送项目
 
 将本地项目推送到线上环境（本地或线上）。
 
@@ -153,7 +138,7 @@ ENV=server node source-push.js aaaabbbbccccddddeeeeffff00001111
 
 ---
 
-### 4. source-api-pull.js - 拉取 API
+### 3. source-api-pull.js - 拉取 API
 
 从线上拉取 API，支持拉取单个、目录或全部 API。
 
@@ -181,7 +166,7 @@ node source-api-pull.js abc123
 
 ---
 
-### 5. source-api-push.js - 推送 API
+### 4. source-api-push.js - 推送 API
 
 将本地 API 推送到线上，支持推送单个、目录或全部 API。
 
@@ -208,7 +193,7 @@ node source-api-push.js abc123
 
 ---
 
-### 6. source-page-pull.js - 拉取页面
+### 5. source-page-pull.js - 拉取页面
 
 从线上拉取页面，支持拉取单个、目录或全部页面。
 
@@ -236,7 +221,7 @@ node source-page-pull.js def456
 
 ---
 
-### 7. source-page-push.js - 推送页面
+### 6. source-page-push.js - 推送页面
 
 将本地页面推送到线上，支持推送单个、目录或全部页面。
 
@@ -264,7 +249,7 @@ node source-page-pull.js def456
 
 ---
 
-### 8. source-db-pull.js - 拉取数据库配置
+### 7. source-db-pull.js - 拉取数据库配置
 
 从线上拉取数据库配置（完全覆盖本地）。
 

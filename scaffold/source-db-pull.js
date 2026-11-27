@@ -15,9 +15,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
-const unzipper = require('unzipper');
 const utils = require('./utils');
+const axios = utils.loadDep('axios');
+const unzipper = utils.loadDep('unzipper');
 
 // 加载 .env（统一走 utils，别在这里再抄一份 —— CRLF 的坑只需要在 utils 里修一次）
 utils.loadEnv();

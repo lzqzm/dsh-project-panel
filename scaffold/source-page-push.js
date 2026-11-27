@@ -24,9 +24,9 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const archiver = require('archiver');
-const axios = require('axios');
 const utils = require('./utils');
+const archiver = utils.loadDep('archiver');
+const axios = utils.loadDep('axios');
 
 // 加载 .env 环境变量
 utils.loadEnv();
@@ -79,7 +79,7 @@ if (PROJECT_UUID) {
 
 if (!projectDir || !fs.existsSync(projectDir)) {
     console.error('❌ 错误: 项目目录不存在');
-    console.error('请确保在 .env 中配置了 PROJECT_UUID，或先运行 source-pull.js');
+    console.error('请确保在 .env 中配置了 PROJECT_UUID，或先运行 source-clone.js');
     process.exit(1);
 }
 
@@ -474,7 +474,7 @@ async function main() {
 
         // 上传（会话失效时自动重新登录并重试一次）
         const uploadOnce = async () => {
-            const formData = new (require('form-data'))();
+            const formData = new (utils.loadDep('form-data'))();
             formData.append('file', fs.createReadStream(tempZipPath));
 
             const resp = await axios.post(importUrl, formData, {

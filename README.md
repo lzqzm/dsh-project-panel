@@ -250,11 +250,10 @@ dsh plugin --profile web add D:\path\to\dsh-project-panel
 1. **新建档案** —— 填服务器地址 / 设计器账号 / 设计器密码（后台租户 / 后台账号 / 后台密码可以以后补，什么时候点 `index.html` 什么时候提示你）
 2. **铺脚手架** —— 把模板脚本铺进来（已存在的文件不会被改动）
 3. **写入 .env** —— 落盘；原来没有 `.env` 就新建一个
-4. **装依赖** —— 装 `axios` / `archiver` / `form-data` / `unzipper`
 
 之后脚本卡片就长出来了，选个项目点「克隆整个项目」即可。
 
-依赖只装一次，装在插件自己目录里，跑脚本时用 `NODE_PATH` 复用 —— 不必给每个新目录各来一次 `npm install`。目标目录自带 `node_modules` 时优先用它。
+依赖**随插件自带**，不用你装：`scaffold/vendor` 里有一份 0.8MB 的 bundle（axios / archiver / form-data / unzipper 打成一个文件），铺脚手架时会铺到工作区根的 `.mc-deps/deps.cjs`；面板跑脚本时注入 `NODE_PATH`，终端里手跑时脚本自己从 `.mc-deps` 加载。所以客户机器上不需要有 Node 工程、也不需要 `npm install`，`node source-clone.js` 直接就能跑。目标目录自带 `node_modules` 时仍然优先用它。只有插件的 `scaffold/vendor` 被删掉时才会退回去装到 `DSH_HOME/scaffold-deps`（所有工作区共用一份）。
 
 ---
 

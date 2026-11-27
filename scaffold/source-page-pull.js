@@ -21,9 +21,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
-const unzipper = require('unzipper');
 const utils = require('./utils');
+const axios = utils.loadDep('axios');
+const unzipper = utils.loadDep('unzipper');
 
 // 加载 .env 环境变量
 utils.loadEnv();
@@ -76,7 +76,7 @@ if (PROJECT_UUID) {
 
 if (!projectDir || !fs.existsSync(projectDir)) {
     console.error('❌ 错误: 项目目录不存在');
-    console.error('请确保在 .env 中配置了 PROJECT_UUID，或先运行 source-pull.js');
+    console.error('请确保在 .env 中配置了 PROJECT_UUID，或先运行 source-clone.js');
     process.exit(1);
 }
 
