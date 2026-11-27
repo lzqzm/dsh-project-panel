@@ -2,7 +2,7 @@
 
 > DeepSeek Harness Web 端的**低代码工程面板**：把 MagicalCoder 风格的工程目录搬进会话侧栏 —— 文件树、推送状态、源码编辑、推送前校验、工程脚本，一处看全。
 
-> ⚠️ **本插件没有发布到 npm。** npm 上有一个同名的 `dsh-project-panel@0.1.1`，那是**别人的包**（描述是 “Project progress panel: aggregates status.json anchors…”），与本项目无关。在 DSH「添加插件」里把安装源选成 **npm 官方源**再输入 `dsh-project-panel`，装到的就是它 —— 版本旧、功能也不是工程面板。请按下面「一、安装」里的命令装，或者从插件市场「发现」页装。
+> ⚠️ **npm 上裸名 `dsh-project-panel` 不是本插件。** 它属于别人的账号（`0.1.1`，描述是 “Project progress panel: aggregates status.json anchors…”）。本插件在 npm 上的名字是 **`@lzqzm/dsh-project-panel`**（0.1.19 起发布）。在 DSH「添加插件」里选 npm 源时请填带 `@lzqzm/` 前缀的名字，别填裸名；拿不准就直接按下面「一、安装」走市场或 Release。
 
 MagicalCoder 风格的工程是一套约定目录：页面由 `page.json` + `index.html` + `page.js` 三件套组成，接口是 `meta.json`，工程脚本叫 `source-*.js`，页面里必须有 `magicalDragScene` 容器，调平台接口要走 `/magical_lowcode/` 前缀……这些约定在普通编辑器里全靠记性和手工核对。
 
@@ -23,21 +23,27 @@ MagicalCoder 风格的工程是一套约定目录：页面由 `page.json` + `ind
 
 「插件市场 → 发现」里搜「工程面板」或 `dsh-project-panel`（[市场页](https://awesome-dsh-plugin.com/p/lzqzm/dsh-project-panel/)），点安装即可。市场里那条的安装地址是 GitHub Release 的 `dsh-project-panel.tgz`，不碰 npm、不碰 git。
 
-### 方式二：命令行（走 HTTPS + Release 包，不需要 git / SSH）
+### 方式二：npm（官方镜像包，记得带 `@lzqzm/` 前缀）
+
+```bash
+dsh plugin --profile web add @lzqzm/dsh-project-panel
+```
+
+> ❗ **必须写 `@lzqzm/dsh-project-panel`。** npm 上的裸名 `dsh-project-panel` 是别人的包（0.1.1，功能也完全不是工程面板），装了用不了。
+
+### 方式三：命令行（走 HTTPS + Release 包，不需要 git / SSH）
 
 ```bash
 dsh plugin --profile web add -w "https://github.com/lzqzm/dsh-project-panel/releases/latest/download/dsh-project-panel.tgz"
 ```
 
-`latest` 永远指向最新 release。要固定版本就把 `latest/download` 换成 `download/v0.1.18`：
+`latest` 永远指向最新 release。要固定版本就把 `latest/download` 换成 `download/v0.1.19`：
 
 ```bash
-dsh plugin --profile web add -w "https://github.com/lzqzm/dsh-project-panel/releases/download/v0.1.18/dsh-project-panel.tgz"
+dsh plugin --profile web add -w "https://github.com/lzqzm/dsh-project-panel/releases/download/v0.1.19/dsh-project-panel.tgz"
 ```
 
-> ❗ **不要用 npm 源装。** 本插件从未发布到 npm，npm 上的 `dsh-project-panel` 是别人的包（0.1.1，功能也完全不是工程面板），装了用不了。
-
-### 方式三：git 地址（需要机器上有可用的 git）
+### 方式四：git 地址（需要机器上有可用的 git）
 
 ```bash
 dsh plugin --profile web add https://github.com/lzqzm/dsh-project-panel.git
@@ -52,7 +58,7 @@ dsh plugin --profile web add https://github.com/lzqzm/dsh-project-panel.git
 >   git config --global url."https://github.com/".insteadOf "git@github.com:"
 >   ```
 
-### 方式四：本地开发（`link:` 安装，装的是你正在改的那份源码）
+### 方式五：本地开发（`link:` 安装，装的是你正在改的那份源码）
 
 ```bash
 dsh plugin --profile web add D:\path\to\dsh-project-panel

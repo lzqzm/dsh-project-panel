@@ -3452,7 +3452,7 @@ node scripts/publish-release.mjs --dry-run        # 只打包，不碰 API
 - `scaffold/help.md` 顶部同样加一句（工程脚本常被单独转发给客户）；
 - `package.json` 的 `description` 末尾补一句提示（会出现在市场卡片和数据接口里）。
 
-要彻底让「npm 源」也能装对，只能用自己的账号发**新包名**（如 `@lzqm/dsh-project-panel`），
+要彻底让「npm 源」也能装对，只能用自己的账号发**新包名**（如 `@lzqzm/dsh-project-panel`），
 再把市场条目的 `npm` 字段指过去 —— 裸名 `dsh-project-panel` 收不回来。
 
 ---
@@ -3464,15 +3464,37 @@ node scripts/publish-release.mjs --dry-run        # 只打包，不碰 API
 1. **文档层面**：README 顶部与「一、安装」、`scaffold/help.md` 顶部、`package.json` description
    都写明了「npm 上的 `dsh-project-panel` 不是本插件」，正确装法指向市场与 Release tarball。
 2. **npm 官方镜像**：新增 `scripts/publish-npm.mjs`，把同一份代码发布成
-   `@lzqm/dsh-project-panel` —— npm 源里填这个名字才能装到本插件。
+   `@lzqzm/dsh-project-panel` —— npm 源里填这个名字才能装到本插件。
    脚本从 `npm pack` 产物里解一份副本，只改 `package.json` 的 name 和
    `cordis.patch.yml` 的 id/name，源仓库、tag、Release 资产（`dsh-project-panel.tgz`）都不动，
    所以市场安装与已装用户的升级路径完全不受影响。
 
 `ash
-npm login --registry=https://registry.npmjs.org   # 账号 lzqm
+npm login --registry=https://registry.npmjs.org   # 账号 lzqzm
 npm run publish:npm                                # 或 node scripts/publish-npm.mjs --dry-run
 `
 
-注意：裸名 `dsh-project-panel` 在 npm 上属于别人，收不回来；`@lzqm/dsh-project-panel`
+注意：裸名 `dsh-project-panel` 在 npm 上属于别人，收不回来；`@lzqzm/dsh-project-panel`
 只是给「必须走 npm 源」的场景一个正确入口，市场安装仍然以 Release tarball 为准。
+
+## 0.1.19 已发布到 npm：三道门禁都踩了一遍
+
+`@lzqzm/dsh-project-panel@0.1.19` 已经公开（https://www.npmjs.com/package/@lzqzm/dsh-project-panel），
+tarball 801.5 kB，`latest` 指向它。发版过程比预想麻烦，记下来免得下次重踩：
+
+1. **2FA 是硬门禁**。账号原先没开 2FA，`npm publish` 直接 **`E403 ... Two-factor authentication
+   ... is required to publish packages`**。新版向导只给 Security key 一种方式（Windows Hello
+   指纹 / PIN、passkey、USB 密钥），**没有 TOTP 认证器选项**；本机 `npm config get auth-type`
+   已经是 `web`。
+2. **用安全密钥时发布是浏览器流程**。`npm publish` 打印
+   `Authenticate your account at: https://www.npmjs.com/auth/cli/...` 然后等回车；回车后在已登录
+   npm 的浏览器里用 Windows Hello 确认，CLI 才继续上传。`--otp` 对这种模式没有意义。
+3. **发布后不是立刻可查**。打印 `+ @lzqzm/dsh-project-panel@0.1.19` 之后几分钟内，
+   `npm view` 和直接 `curl registry.npmjs.org` 全是 404；搜索索引里先出现的是 npm 给「新包首版」
+   建的占位 **`0.0.0-stage`**（描述 "Temporary package placeholder for staged publishing"），
+   而 `npm stage list` 又是空的 —— 别据此判定被暂存卡住，等几分钟再查就 200 了。
+4. **镜像源的坑**。本机默认 `registry` 是 npmmirror，`npm stage` / `npm view` / 发布这类官方源
+   操作必须显式 `--registry=https://registry.npmjs.org`；用镜像跑 `npm stage list` 会
+   `404 [NOT_FOUND] /-/stage not found`。
+5. **脚本不再走 shell**。Node 24 下 `spawnSync('npm', args, { shell: true })` 会报 DEP0190
+   （参数不转义）；`scripts/publish-npm.mjs` 改成直接执行 `node_modules/npm/bin/npm-cli.js`。
